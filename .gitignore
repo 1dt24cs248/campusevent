@@ -1,0 +1,55 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.venv/
+venv/
+env/
+
+# Secrets and environment configuration
+.env
+.env.*
+!.env.example
+
+# Databases and local runtime data
+*.db
+*.sqlite
+*.sqlite3
+backend/data/
+
+# Frontend dependencies and builds
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+
+# IDE and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# SQLite runtime files
+*.db-shm
+*.db-wal
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
+
+# Python temporary databases
+*-e2e.sqlite
+*-e2e.sqlite-shm
+*-e2e.sqlite-wal
+
+data/*.pdf

@@ -1,0 +1,44 @@
+{
+  "block": {
+    "code": "A",
+    "name": "Block A",
+    "is_active": true,
+    "is_pilot": true
+  },
+  "floors": [
+    {"level": -1, "label": "Basement"},
+    {"level": 0, "label": "Ground Floor"},
+    {"level": 1, "label": "1st Floor"},
+    {"level": 2, "label": "2nd Floor"},
+    {"level": 3, "label": "3rd Floor"},
+    {"level": 4, "label": "4th Floor"},
+    {"level": 5, "label": "5th Floor"}
+  ],
+  "rooms": {
+    "basement": [
+      {"code": "SH-01", "display_name": "Seminar Hall 1", "aliases": ["SH-1","SH01"], "resource_type": "SEMINAR_HALL", "department": "FIRST_YEAR", "capacity": 100, "capacity_provenance": "PROVIDED", "allocatable_for_classes": true, "reservable_for_events": true, "lab_kind": null, "facilities": ["PROJECTOR","PA_SYSTEM"], "is_spare": false, "provenance": "PROVIDED"},
+      {"code": "SH-02", "display_name": "Seminar Hall 2", "aliases": ["SH-2","SH02"], "resource_type": "SEMINAR_HALL", "department": "FIRST_YEAR", "capacity": 80, "capacity_provenance": "PROVIDED", "allocatable_for_classes": true, "reservable_for_events": true, "lab_kind": null, "facilities": ["PROJECTOR","PA_SYSTEM"], "is_spare": false, "provenance": "PROVIDED"},
+      {"code": "B03", "display_name": "B03", "aliases": ["B-03"], "resource_type": "CLASSROOM", "department": "FIRST_YEAR", "capacity": 60, "capacity_provenance": "PROVIDED", "allocatable_for_classes": true, "reservable_for_events": false, "lab_kind": null, "facilities": ["PROJECTOR"], "is_spare": false, "provenance": "PROVIDED"},
+      {"code": "B04", "display_name": "B04", "aliases": ["B-04"], "resource_type": "CLASSROOM", "department": "FIRST_YEAR", "capacity": 55, "capacity_provenance": "PROVIDED", "allocatable_for_classes": true, "reservable_for_events": false, "lab_kind": null, "facilities": ["PROJECTOR"], "is_spare": false, "provenance": "PROVIDED"},
+      {"code": "B05", "display_name": "B05", "aliases": ["B-05"], "resource_type": "CLASSROOM", "department": "FIRST_YEAR", "capacity": 70, "capacity_provenance": "PROVIDED", "allocatable_for_classes": true, "reservable_for_events": false, "lab_kind": null, "facilities": ["PROJECTOR"], "is_spare": false, "provenance": "PROVIDED"},
+      {"code": "AIML-LAB", "display_name": "AIML Lab", "aliases": ["AIML Lab"], "resource_type": "LAB", "department": "FIRST_YEAR", "capacity": 35, "capacity_provenance": "ESTIMATED", "allocatable_for_classes": true, "reservable_for_events": false, "lab_kind": "AIML", "facilities": ["LAB_EQUIPMENT"], "is_spare": false, "provenance": "ESTIMATED"},
+      {"code": "PHYS-LAB", "display_name": "Physics Lab", "aliases": ["Physics Lab"], "resource_type": "LAB", "department": "FIRST_YEAR", "capacity": 35, "capacity_provenance": "ESTIMATED", "allocatable_for_classes": true, "reservable_for_events": false, "lab_kind": "PHYSICS", "facilities": ["LAB_EQUIPMENT"], "is_spare": false, "provenance": "ESTIMATED"},
+      {"code": "CHEM-LAB", "display_name": "Chemistry Lab", "aliases": ["Chemistry Lab"], "resource_type": "LAB", "department": "FIRST_YEAR", "capacity": 35, "capacity_provenance": "ESTIMATED", "allocatable_for_classes": true, "reservable_for_events": false, "lab_kind": "CHEMISTRY", "facilities": ["LAB_EQUIPMENT"], "is_spare": false, "provenance": "ESTIMATED"}
+    ],
+    "ground": [
+      {"code": "PRINCIPAL", "display_name": "Principal Office", "aliases": [], "resource_type": "OFFICE", "department": null, "capacity": null, "capacity_provenance": null, "allocatable_for_classes": false, "reservable_for_events": false, "lab_kind": null, "facilities": [], "is_spare": false, "provenance": "PROVIDED"},
+      {"code": "ADMISSION", "display_name": "Admission Block", "aliases": [], "resource_type": "OFFICE", "department": null, "capacity": null, "capacity_provenance": null, "allocatable_for_classes": false, "reservable_for_events": false, "lab_kind": null, "facilities": [], "is_spare": false, "provenance": "PROVIDED"},
+      {"code": "ENQUIRY", "display_name": "Enquiry Office", "aliases": [], "resource_type": "OFFICE", "department": null, "capacity": null, "capacity_provenance": null, "allocatable_for_classes": false, "reservable_for_events": false, "lab_kind": null, "facilities": [], "is_spare": false, "provenance": "PROVIDED"},
+      {"code": "MEETING-HALL", "display_name": "Meeting Hall", "aliases": [], "resource_type": "MEETING_HALL", "department": null, "capacity": null, "capacity_provenance": null, "allocatable_for_classes": false, "reservable_for_events": true, "lab_kind": null, "facilities": [], "is_spare": false, "provenance": "PROVIDED"}
+    ]
+  },
+  "departments": [
+    {"code": "CSE", "name": "Computer Science & Engineering"},
+    {"code": "ISE", "name": "Information Science & Engineering"},
+    {"code": "MECH", "name": "Mechanical Engineering"},
+    {"code": "CIVIL", "name": "Civil Engineering"},
+    {"code": "DS", "name": "Data Science"},
+    {"code": "AIML", "name": "AI & Machine Learning"},
+    {"code": "FIRST_YEAR", "name": "First Year"}
+  ]
+}

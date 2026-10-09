@@ -1,0 +1,384 @@
+==========================================================================
+CAMPUS INTELLIGENCE & ACTION PLATFORM  -  MASTER BUILD SPECIFICATION
+Subtitle: "AI-Powered What-If Decision Simulator for Smart Campus Management"
+Label everywhere in the UI: "Block A Pilot Implementation"
+==========================================================================
+Save this file in the workspace root as PROJECT_SPEC.txt. Read ALL of it before writing any code.
+
+--------------------------------------------------------------------------
+PART 0 - HOW YOU MUST WORK (AGENT RULES)
+--------------------------------------------------------------------------
+0.1  You are building a COMPLETE, RUNNABLE proof of concept for a Smart Campus innovation competition. Build it end to end in this one session. Do not ask me questions. When something is ambiguous, pick the most reasonable option, and record it in DECISIONS.md (one line per decision).
+0.2  Create BUILD_STATUS.md at the start: a checklist of every milestone in PART 19. Update it after each milestone. If you are interrupted, the next session resumes from the first unchecked milestone.
+0.3  After EVERY milestone: run the code, run the tests for that milestone, fix failures, then move on. Never stack unverified code.
+0.4  Build a thin vertical slice first (seed -> engine -> one API -> one page), then widen. A working simulator with a plain UI beats a beautiful UI with a broken engine.
+0.5  No "TODO", no stub endpoints, no hard-coded demo answers on any Tier-1 path (PART 2). Every number shown in the UI must be computed from the database. If a feature cannot be completed, make it clearly labelled "Configurable / not enabled in pilot" instead of faking it.
+0.6  Use the browser tool at the end to open the running app and walk through the full demo script in PART 17. Fix what breaks. Save 6-8 screenshots in docs/screenshots/.
+0.7  Keep it simple: ONE backend process, ONE frontend dev server. No Docker, no Redis, no message queue, no microservices, no cloud deployment.
+0.8  Write clean, commented, modular code (module boundaries in PART 3). Keep files focused; avoid 2000-line files.
+
+--------------------------------------------------------------------------
+PART 1 - PRODUCT SUMMARY AND NON-NEGOTIABLE RULES
+--------------------------------------------------------------------------
+Students, faculty and management use ONE connected platform on ONE shared campus data model. The main innovation: management can ask "What happens if I make this decision?" BEFORE doing it. The system simulates the decision on a temporary copy of the campus state, finds affected classes/sections/faculty, searches alternative rooms with a constraint optimizer, produces up to 3 distinct options with impact metrics, lets management compare scenarios, and only after human approval publishes the change to faculty, students, navigation and the AI assistant.
+
+The product is NOT: a timetable generator, a room-booking app, a generic ERP, or a ChatGPT clone.
+
+NON-NEGOTIABLE RULES
+R1  The LLM never decides room allocation. Flow is always: natural language -> AI interpretation -> structured scenario -> OR-Tools CP-SAT optimizer -> result -> explanation. Allocation decisions come only from the optimizer.
+R2  Never fake feasibility. If rooms/capacity are insufficient, say "No feasible allocation found" (or "Partially feasible") and explain exactly why, with numbers.
+R3  A simulation NEVER changes the published campus state. Only "Approve & Publish" by a Management user does.
+R4  Three states must stay distinct: (a) current published state, (b) temporary simulated scenario, (c) approved/published new version. Keep version history and support revert.
+R5  No fabricated real-world data. Every data record carries a provenance tag: PROVIDED (given by me in this spec), ESTIMATED (placeholder for a value I did not give; editable), SYNTHETIC (generated test data), or REAL_TIMETABLE_PDF (extracted from the real timetable). The UI must show a small provenance chip wherever it matters (rooms, sections, timetable entries) and a legend.
+R6  Never claim energy, electricity, money, or food-waste savings. Utilization is computed from timetable data only.
+R7  Safety module: never claim guaranteed emergency response. Emergency integrations run in clearly labelled TEST MODE using configurable test contacts.
+R8  Sensitive data (incidents) is encrypted at rest and visible only to the Safety role. Every sensitive access is audit-logged.
+R9  AI answers only from tool results (campus database). If data is missing the assistant says "That information is not available in the campus data." It never invents rooms, times, reasons, events.
+R10 The architecture must allow adding Block B, C... later with no redesign: every room/floor belongs to a Block row; Block A is the only active block and the default selection.
+
+--------------------------------------------------------------------------
+PART 2 - SCOPE AND PRIORITY (ONE-DAY BUILD)
+--------------------------------------------------------------------------
+TIER 1 - must work flawlessly (build first):
+ 1 Master data + seed (Block A + sections + timetable)
+ 2 Auth + role-based access (Student, Faculty, Management, Maintenance, Safety)
+ 3 Campus state + validation: allocated / at-risk / floating / conflicts, dynamic backup rooms
+ 4 CP-SAT allocation engine
+ 5 What-If simulator using ONE mechanism for all scenario types
+ 6 Impact analysis, up to 3 options, scenario comparison, explanations, infeasibility reports
+ 7 Review -> Approve & Publish -> versions -> revert
+ 8 Connected propagation: faculty dashboard, student dashboard, navigation, AI assistant all read the published state
+ 9 Student, Faculty, Management dashboards
+ 10 Campus AI assistant (must work with NO api key via a rule-based router; LLM is optional)
+TIER 2 (build after Tier 1 is verified):
+ Maintenance tickets that can close rooms; Events that reserve rooms; Utilization analytics; Safety/incident reporting + emergency test workflow; Opportunities; natural-language scenario creation; Admin data editor; timetable PDF import attempt.
+TIER 3 - explicitly NOT building: food ordering, PWA, push notifications, SSE/WebSockets (use polling), Docker, cloud deploy, multi-language, payments.
+
+--------------------------------------------------------------------------
+PART 3 - TECH STACK AND PROJECT LAYOUT
+--------------------------------------------------------------------------
+Backend : Python 3.11/3.12, FastAPI, Uvicorn, SQLAlchemy 2.x, Pydantic v2 + pydantic-settings, PyJWT, bcrypt, cryptography (Fernet), ortools (CP-SAT), networkx, pdfplumber (optional import), httpx, python-dotenv, pytest.
+Database: SQLAlchemy with DATABASE_URL. DEFAULT = SQLite file (backend/campus.db) so setup is zero-install. Must also work on PostgreSQL by only changing DATABASE_URL: use generic JSON type, string-valued enums, no SQLite-only SQL. Use create_all + seed script (no Alembic).
+Frontend: React 18 + TypeScript + Vite, React Router, TanStack Query (polling via refetchInterval), Tailwind CSS (use the Vite plugin version that installs cleanly), Recharts, lucide-react, date-fns. Vite dev proxy: /api -> http://localhost:8000.
+AI: provider interface with implementations: NullProvider (rule-based, default), GeminiProvider (google-genai), AnthropicProvider (anthropic), OpenAIProvider (optional). Lazy imports; only the configured provider's package is required.
+Time zone: Asia/Kolkata. All datetimes are naive campus-local. Ports: backend 8000, frontend 5173.
+
+LAYOUT
+campus-intelligence/
+  README.md  PROJECT_SPEC.txt  BUILD_STATUS.md  DECISIONS.md  SEED_REPORT.md
+  data/            blockA_master.json, sections.json, timetable_template.csv, (user may add) timetable.pdf
+  docs/            ARCHITECTURE.md, SECURITY.md, screenshots/
+  scripts/         demo_check.py, start_backend.(bat|sh), start_frontend.(bat|sh), reset_demo.(bat|sh)
+  backend/
+    requirements.txt  .env.example  campus.db(generated)
+    app/
+      main.py config.py db.py security.py deps.py audit.py clock.py
+      models/      (SQLAlchemy models, grouped by domain)
+      schemas/     (Pydantic)
+      routers/     auth campus timetable state scenarios publish notifications ai navigation maintenance events opportunities safety analytics admin
+      engine/      slots.py state.py candidates.py validate.py optimizer.py options.py impact.py explain.py recovery.py scenario_apply.py publish.py
+      ai/          provider.py providers/{null,gemini,anthropic,openai}.py tools.py rules.py nl_scenario.py prompts.py
+      nav/         graph.py
+      seed/        seed_all.py blockA.py synthetic_timetable.py pdf_import.py gen_keys.py
+    tests/
+  frontend/
+    package.json vite.config.ts index.html
+    src/ app/ (router, auth, layout) | api/ (typed client) | components/ | features/{student,faculty,management,simulator,navigation,assistant,safety,maintenance,events,admin}
+
+.env.example keys: DATABASE_URL, JWT_SECRET, APP_ENCRYPTION_KEY (Fernet), DEMO_MODE=true, CAMPUS_TZ=Asia/Kolkata, LLM_PROVIDER=none|gemini|anthropic|openai, LLM_API_KEY, LLM_MODEL (name from the provider's current docs; leave blank when provider=none), SOLVER_TIME_LIMIT_SEC=8.
+scripts/gen_keys must generate JWT_SECRET and APP_ENCRYPTION_KEY into backend/.env automatically on first setup.
+
+--------------------------------------------------------------------------
+PART 4 - BLOCK A MASTER DATA (USE EXACTLY; DO NOT SILENTLY OVERRIDE)
+--------------------------------------------------------------------------
+Store as editable DB data (floor/room mapping configurable in Admin). Floor level numbers: basement=-1, ground=0, then 1..5. Room codes without hyphen (A101); store aliases such as "A-101", "101". Provenance in brackets.
+
+BASEMENT (mainly first-year classes; department tag FIRST_YEAR)
+  SH-01  SEMINAR_HALL cap 100 [PROVIDED]     SH-02  SEMINAR_HALL cap 80 [PROVIDED]
+  B03 CLASSROOM 60, B04 CLASSROOM 55, B05 CLASSROOM 70 [PROVIDED]
+  Labs: "AIML Lab", "Physics Lab", "Chemistry Lab" (LAB, capacity 35 [ESTIMATED], lab_kind AIML / PHYSICS / CHEMISTRY)
+GROUND FLOOR (administrative, NOT classrooms; allocatable_for_classes=false)
+  Principal Office, Admission Block, Enquiry Office = OFFICE (not reservable for classes or events)
+  Meeting Hall = MEETING_HALL (capacity unknown/null; reservable for events/meetings only)
+1ST FLOOR (CSE)
+  A101..A108 CLASSROOM caps: 60,65,50,55,70,60,65,55 [PROVIDED]
+  "CSE Lab 1", "CSE Lab 2" LAB cap 35, 35 [PROVIDED], lab_kind CSE
+  "1st Floor Spare Room" (code A1-SPARE) CLASSROOM cap 60 [ESTIMATED], allocatable=true, name is placeholder
+2ND FLOOR (ISE)
+  A201..A208 CLASSROOM caps [ESTIMATED, I only said "approximately 60-70"]: 65,60,70,62,66,60,68,64
+  "ISE Lab 1", "ISE Lab 2" LAB 35 [ESTIMATED], lab_kind ISE;  "2nd Floor Spare Room" (A2-SPARE) CLASSROOM 60 [ESTIMATED]
+3RD FLOOR (Mechanical/Civil)
+  A301..A304 CLASSROOM caps [ESTIMATED]: 60,64,68,70
+  "Civil/Mech Lab 1..3" LAB 35 [ESTIMATED], lab_kind MECH_CIVIL
+  "3rd Floor Spare 1..3" (A3-SPARE-1..3) CLASSROOM caps 60,64,66 [ESTIMATED] (usable by seniors/other sections)
+4TH FLOOR (Data Science)
+  A401..A405 CLASSROOM caps [ESTIMATED]: 60,62,65,68,70
+  "DS Lab 1", "DS Lab 2" LAB 35 [ESTIMATED], lab_kind DS
+  "4th Floor Spare 1..2" (A4-SPARE-1..2) CLASSROOM caps 60,66 [ESTIMATED]
+  "Staff Room" = STAFF_ROOM (allocatable_for_classes=false, never a classroom)
+5TH FLOOR (AIML)
+  A501..A504 CLASSROOM caps [ESTIMATED]: 60,64,66,70
+  "5th Floor Spare 1..2" (A5-SPARE-1..2) CLASSROOM caps 62,66 [ESTIMATED]
+  "Common Room 1..2" = COMMON_USE (allocatable_for_classes=false by default; management can enable in Admin)
+Facilities: I did NOT provide facility data. Seed classrooms/seminar halls with facilities ["PROJECTOR"] (+"PA_SYSTEM" for SH), labs ["LAB_EQUIPMENT"], all tagged [ESTIMATED] and editable. Accessibility (ramp/lift) data: NOT provided -> store as null/unknown; never invent.
+Room fields: id, block_id, floor_id, code, display_name, aliases[], resource_type (CLASSROOM, LAB, SEMINAR_HALL, MEETING_HALL, OFFICE, STAFF_ROOM, COMMON_USE), department, capacity (nullable), capacity_provenance, allocatable_for_classes, reservable_for_events, lab_kind, facilities[], accessible (nullable), status (ACTIVE/OUT_OF_SERVICE), is_spare, provenance, notes.
+
+HOME-ROOM MAPPING (SOFT PREFERENCE ONLY, never a hard assignment) [PROVIDED]
+  2CSE-A->A101, 2CSE-B->A102, 2CSE-C->A103, 3CSE-A->A104, 3CSE-B->A105, 3CSE-C->A106, 4CSE-A->A107, 4CSE-B->A108.
+  Store as Section.home_room_id.
+
+SECTIONS (student strength) [PROVIDED]
+  2nd year CSE: A 63, B 67, C 57.   3rd year CSE: A 63, B 69, C 58.   Final year CSE: A 68, B 70.
+  Section code format "3CSE-A", display "3rd Year CSE-A". Final year = year 4.
+  First year: "approximately 65-70" per section, count not given -> create 1-A 66, 1-B 68, 1-C 70 [ESTIMATED]; home rooms B05, SH-01, SH-02 [ESTIMATED]; editable in Admin.
+  Other departments' sections were NOT provided -> generate clearly tagged SYNTHETIC "background sections" (strength 50-60) so alternative rooms are realistically busy: 2ISE-A 58, 3ISE-A 60, 4ISE-A 56, 2ISE-B 59 (homes A201-A204); 2ME-A 54, 3ME-A 57, 2CV-A 50, 3CV-A 55 (homes A301-A304); 2DS-A 60, 3DS-A 58, 4DS-A 55, 2DS-B 59 (homes A401-A404); 2AI-A 60, 3AI-A 58, 4AI-A 57, 3AI-B 60 (homes A501-A504). Show a "SAMPLE DATA" chip on them.
+
+IMPORTANT DATA REALITY (must handle honestly, do not hide): several CSE strengths exceed the capacities of their conceptual home rooms (e.g. 2CSE-A 63 vs A101 60; 4CSE-B 70 vs A108 55). Capacity is a HARD constraint (strength <= capacity). Therefore:
+  - The initial published allocation is computed by the CP-SAT engine (strict capacity) with home room as a soft preference.
+  - Add a "Data Reconciliation" panel (Management > Admin) listing every section whose home room is too small, with the shortfall. This is a real finding, not an error.
+  - Add Settings: capacity_basis = STRICT_ENROLLMENT (default) | EXPECTED_ATTENDANCE with attendance_factor (default 1.0). Default must stay strict; changing it is management's explicit decision and is shown in the UI.
+  - Lab sessions use batch size = ceil(strength / lab_batches), setting lab_batches default 2 [ESTIMATED, editable], because labs run per batch.
+
+REAL TIMETABLE PDF (optional input)
+  Slots in the real college timetable (use these exactly): P1 9:30-10:25, P2 10:25-11:20, [Tea Break 11:20-11:35], P3 11:35-12:30, P4 12:30-1:25, [Lunch 1:25-2:15], P5 2:15-3:10, P6 3:10-4:05, P7 4:05-5:00.
+  If data/timetable.pdf exists: spend at most ~45 minutes of effort on pdf_import.py (pdfplumber table extraction). Import only what parses reliably, with provenance REAL_TIMETABLE_PDF. Room tokens map through aliases ("202"->A202, "203"->A203, "SH-2"->SH-02). Any token that does not map to a Block A room (e.g. "506" has no matching room) must NOT be guessed: put it in an Admin "Needs Review" queue with the source row. Never let PDF data override the Block A master data above. If extraction is unreliable, skip it, say so in SEED_REPORT.md, and rely on the synthetic timetable plus the CSV import in Admin (data/timetable_template.csv).
+  The real PDF is evidence that rooms are shared dynamically; the engine must never assume a class permanently owns a room.
+
+--------------------------------------------------------------------------
+PART 5 - TIME MODEL
+--------------------------------------------------------------------------
+Slots P1..P7 as above (breaks are not teachable slots). Working days configurable, default Mon-Sat; the synthetic generator fills Mon-Fri fully and Saturday P1-P4 only.
+Weekly template: TimetableEntry(section, subject, faculty, weekday, start_slot, duration_slots (1 for theory, 2 for lab, lab blocks only at P1-P2, P3-P4, P5-P6, P6-P7), kind THEORY|LAB, required room type / lab_kind / facilities, base_room_id, provenance).
+Dated sessions: a "Session" = an entry on a specific date. Engine abstraction: Session{key, entry_id, day_key, start_slot, dur, section_id, subject_id, faculty_id, kind, group_size, orig_room_id}. day_key is a date for scenarios and a weekday for the template-week used by initial allocation.
+Published overrides: SessionOverride(entry_id, date, room_id, start_slot_override nullable, old_room_id, version_id, reason, active). The effective room of a session = active override else entry.base_room.
+Time-window overlap rule: a session is affected by a window if ANY of its slot time ranges overlaps the window (partial overlap counts, flagged "partial"). Example: window 10:00-13:00 touches P1, P2, P3 and P4.
+Scenario horizon: date range up to 14 days. "Tomorrow" in the UI means the next working day; handle Sundays/holidays gracefully (show "no classes scheduled on this date").
+Demo clock: setting DEMO_NOW (Management can set/clear) overrides "now" for dashboards so a student dashboard can be demonstrated at e.g. 08:30.
+
+--------------------------------------------------------------------------
+PART 6 - DATA MODEL (SQLAlchemy; keep names)
+--------------------------------------------------------------------------
+Campus structure: Block(id, code, name, is_active, is_pilot), Floor(id, block_id, level, label), Room (PART 4).
+Academic: Department, Section(id, code, department_id, year, name, strength, strength_provenance, home_room_id, is_synthetic), Subject(id, code, name, kind, required_facilities, lab_kind, is_synthetic), Faculty(id, user_id, name, department_id, is_synthetic), Student(id, user_id, section_id, anon_code) - no real names, no unnecessary personal data.
+Schedule: TimetableEntry, SessionOverride, SectionStrengthHistory.
+Availability: RoomUnavailability(id, room_id, start_dt, end_dt, reason_type EVENT|MAINTENANCE|EXAM|MEETING|CLOSURE|SCENARIO, ref_type, ref_id, version_id, active, created_by).
+Simulation: Scenario(id, name, category, status DRAFT|SIMULATED|REVIEWED|APPROVED|PUBLISHED|REJECTED, created_by, base_version_id, date_from, date_to, objective_preset, nl_source_text, ai_interpretation JSON, created_at), ScenarioChange(id, scenario_id, type, payload JSON), OptimizationRun(id, scenario_id, option_label, strategy, status FEASIBLE|PARTIAL|INFEASIBLE, metrics JSON, assignments JSON, unresolved JSON, explanations JSON, recovery JSON, solve_ms, created_at), Approval(id, scenario_id, run_id, decided_by, decision APPROVED|REJECTED|MODIFY_REQUESTED, comment, decided_at), PublishedVersion(id, version_no, scenario_id, run_id, published_by, published_at, summary, reverted bool).
+Workflow: Notification(id, audience_type USER|SECTION|FACULTY|ROLE, audience_id, type, title, body, payload JSON, created_at) + NotificationRead(notification_id, user_id, read_at).
+Operations: MaintenanceTicket(id, code MAINT-####, room_id, category, description, priority, status Reported|Assigned|In Progress|Resolved, reported_by, assigned_to), TicketHistory. Event(id, title, category, description, start_dt, end_dt, audience JSON, status), EventRoom(event_id, room_id). Opportunity(id, title, category, organizer, description, eligibility_years JSON, eligibility_depts JSON, deadline, link). Announcement(id, title, body, audience JSON, created_by, published_at). Assessment(id, section_id, subject_id, title, date, kind). CampusFAQ(id, topic, question, answer, approved) for approved campus procedures/facilities info (AI retrieval = simple keyword scoring, no embeddings).
+Safety: Incident(id, code INC-####, reporter_user_id, category, description_enc, location_enc, incident_dt, evidence_path, status Submitted|Under Review|Action Taken|Closed), IncidentStatusHistory, EmergencyConfig(id, emergency_number, contacts JSON, test_mode bool), EmergencyEvent(id, user_id, created_at, location_text, location_shared, status). EmergencyConfig defaults: emergency_number "NOT CONFIGURED", test contacts clearly labelled TEST.
+Navigation: NavNode(id, block_id, floor_id, room_id nullable, kind ENTRANCE|LOBBY|STAIRS|LIFT|ROOM), NavEdge(from, to, cost, accessible nullable), NavConfig(vertical_cost, same_floor_cost).
+Identity/Audit: User(id, email, password_hash, role STUDENT|FACULTY|MANAGEMENT|MAINTENANCE|SAFETY, display_name, active, can_view_incidents), AuditLog(id, ts, user_id, role, action, entity, entity_id, detail JSON), Setting(key, value JSON) for capacity_basis, attendance_factor, lab_batches, demo_now, at_risk_min_backups (default 1).
+Provenance column on seedable tables.
+
+--------------------------------------------------------------------------
+PART 7 - ALLOCATION ENGINE AND OPTIMIZER (THE CORE - BUILD CAREFULLY)
+--------------------------------------------------------------------------
+7.1 CampusState (engine/state.py): immutable snapshot for a date range = rooms + sessions (template expanded to dates, published overrides applied) + unavailability windows (real, active) + settings. A scenario state = base snapshot + in-memory delta from scenario changes. NEVER write scenario effects to production tables during simulation. (Test this.)
+
+7.2 suitable_rooms(session, state) (engine/candidates.py) returns candidate rooms and, for rejected rooms, the machine-readable rejection reason. Filters:
+   - room status ACTIVE and allocatable_for_classes (offices, staff room, meeting hall, common-use excluded unless enabled)
+   - type: THEORY -> CLASSROOM or SEMINAR_HALL; LAB -> LAB with matching lab_kind
+   - capacity known and >= effective group size (capacity_basis rule); null capacity -> rejected "capacity not provided"
+   - required facilities subset of room facilities
+   - not overlapping any unavailability window (check every slot of the session by actual times)
+   - not occupied by a FIXED session in any covered slot
+7.3 Validation of a state (engine/validate.py): classify every session:
+   ALLOCATED (valid room), AT_RISK (valid room but fewer than at_risk_min_backups backup candidates free in that slot), FLOATING (no valid room exists for it), NEEDS_REALLOCATION (current room invalid because unavailable/closed/over capacity/conflict, but alternatives exist). Also detect: ROOM_CONFLICT, SECTION_CONFLICT, FACULTY_CONFLICT, CAPACITY_VIOLATION, UNAVAILABLE_ROOM_USED, TYPE_MISMATCH, FACILITY_MISSING. Every finding has a human-readable reason. Produce the summary line, e.g. "3 sections allocated, 1 at risk, 2 rooms unavailable, 1 capacity conflict" - computed, not hard-coded.
+7.4 Dynamic backup pool: backup_pool(state, day_key, slot) = rooms that are actually free in that slot (not unavailable, not occupied) and allocatable. A room is a backup CANDIDATE for a specific session only if it also satisfies that session's requirements. Never label a room "backup" statically.
+7.5 CP-SAT optimizer (engine/optimizer.py), ortools.sat.python.cp_model:
+   Variables: x[s,r] boolean for each free session s and candidate room r; u[s] boolean "unassigned".
+   Hard constraints: each free session exactly one of {one room, unassigned}; a room hosts at most one session per (day_key, slot) cell (account for multi-slot lab blocks); candidates already exclude unavailable/unsuitable/fixed-occupied rooms. Faculty/section double-booking is a property of the time layout: validate it (and for MOVE_CLASS changes, reject a move that creates a faculty/section clash and report why).
+   Objective (minimize, integers): W_UNASSIGNED*u dominates everything (10000) so the solver always maximizes accommodated classes; plus weighted soft terms per assignment: room change (r != original), walking effort (graph distance original->new), faculty movement (distance to the faculty's adjacent fixed session rooms the same day; simplified linear form, document it), wasted capacity (capacity - group size), department mismatch (small), different floor, and a heavy stability penalty for moving sessions that were NOT directly affected.
+   Settings: random_seed fixed, time limit SOLVER_TIME_LIMIT_SEC, deterministic output.
+   Free vs fixed: default "local repair": only directly affected sessions are free; all others are fixed. Strategy REBALANCE additionally frees unaffected sessions whose cells overlap the affected cells (high stability penalty) - this can find solutions local repair cannot.
+   Return: assignments {session_key: room_id|None}, objective, status, solve ms.
+7.6 Strategy presets (weights) -> options (engine/options.py):
+   MIN_DISRUPTION (min room changes), MIN_WALKING (min student walking effort), MIN_FACULTY_MOVEMENT, MIN_WASTE (tightest capacity fit), REBALANCE (may move unaffected classes).
+   Run presets, de-duplicate by assignment signature, keep up to 3 DISTINCT options. If fewer than 3 distinct and at least one is feasible, add no-good cuts (forbid previous full assignment) and re-solve up to 3 more times to get "next best distinct" options. If fewer distinct solutions exist, say so honestly ("only 2 distinct feasible allocations exist"). Rank by (unresolved asc, room changes asc, walking asc); mark the best "Recommended".
+   Option status: FEASIBLE (all affected sessions accommodated), PARTIAL (some unresolved), INFEASIBLE (none accommodated / impossible).
+7.7 Impact analysis (engine/impact.py). Compute per option and for the scenario: affected rooms, affected sessions/classes, affected sections, affected faculty, alternative rooms found (distinct rooms usable), room changes, floating/unresolved classes created, conflicts, unaffected classes moved (REBALANCE), walking impact (relative effort units, plus student-weighted = distance x group size; label "relative units, not meters"), faculty movement, capacity waste, utilization before vs after (overall, per floor, per room), overall feasibility. Provide a full diff table: session | section | subject | faculty | time | original room -> new room | reason.
+7.8 Explanations (engine/explain.py) - deterministic templates filled with computed facts, e.g. "A201 was selected for 3rd Year CSE-A DBMS (P2, 10:25-11:20) because: capacity 65 >= 63 students; free in P2; type matches; no conflicts; lower walking effort (X units) than A105 (Y units). Rooms rejected: A102 closed by scenario, A104 occupied by 2ME-A, A103 capacity 50 < 63." Include top-3 alternatives with why not chosen. An LLM may OPTIONALLY rephrase; the numbers must come from data, and the original deterministic text stays available.
+7.9 Infeasibility handling (engine/recovery.py). For every unresolved session produce: (a) exclusion breakdown (how many rooms were rejected by each rule); (b) shortage statement per time cell: "N classes need suitable rooms at <time> on <date>, but only M suitable rooms are free; N-M remain unallocated"; (c) near-miss rooms ("B04 capacity 55 is 12 seats short"); (d) recovery suggestions computed from data: 1) time shift: slots on the same date where section + faculty are free and a suitable room is free; 2) release reserved room: which closed rooms in the scenario would satisfy the class if released; 3) change requirement (e.g. split section / reduce strength) only when near-miss exists; 4) "use another block" shown only as "No other block enabled in pilot" unless one is active; 5) escalate to management. Never invent a room.
+7.10 Initial allocation: seed script runs the optimizer on the template week (day_key = weekday) to produce base_room for each entry (home room soft preference). Must end with zero room conflicts.
+
+--------------------------------------------------------------------------
+PART 8 - SCENARIO SYSTEM (ONE MECHANISM FOR EVERYTHING)
+--------------------------------------------------------------------------
+All what-if scenarios are lists of typed changes applied to the same state:
+  ROOM_UNAVAILABLE {room_ids, date_from, date_to, time_from, time_to, reason_type, label}   (event, maintenance, exam, closure, lab unavailable, seminar hall reserved, single room)
+  FLOOR_UNAVAILABLE {floor_id, window}   (expands to all rooms on that floor)
+  RESERVE_ROOMS {room_ids, window, label}   (same engine as ROOM_UNAVAILABLE, shown as event/exam reservation)
+  CHANGE_STRENGTH {section_id, new_strength, date_from, date_to}
+  ADD_SECTION {department, year, name, strength, clone_pattern_from_section_id, date_from, date_to}  (clones a reference section's weekly slot pattern into new entries with no room, so the engine must find rooms; if capacity is insufficient the new section is AT_RISK/FLOATING with a shortage explanation)
+  MOVE_CLASS {entry_id, date, new_start_slot}  (check faculty/section clash at the new time; then room search)
+  STRESS_TEST {k, window}  helper: closes the k most-occupied allocatable rooms in the window (heuristic, say so; not a worst-case guarantee) to answer "Can all classes be accommodated if five classrooms become unavailable?"
+Lifecycle: DRAFT -> SIMULATED -> REVIEWED -> APPROVED -> PUBLISHED (or REJECTED). Show the pipeline in the UI.
+Presets (buttons in the simulator): "Hero: College Event" (see PART 17), "Rooms A101-A104 (example from brief)", "Floor 1 closure", "A201 maintenance 3 days", "Lab unavailable", "Seminar hall reserved", "New first-year section", "Strength 63 -> 75", "Move classes", "Stress test: 5 rooms". The preset must create real scenario records you can edit and re-run.
+Scenario comparison: select 2-4 scenarios (or options) and show side by side: affected classes, sections, room changes, floating classes, conflicts, alternatives, walking impact, utilization, feasibility; highlight the least disruptive.
+Objective preferences exposed to management: min room changes | min floating classes | min walking | min faculty movement | min unused capacity | min disruption | "keep first-year classes unchanged if possible" (implemented as heavy stability penalty on first-year sessions). These are optimizer weights, never an AI choice.
+Review actions: Reject, Modify (edit scenario and re-run), Run Again, Approve & Publish.
+
+PUBLISH (engine/publish.py), single DB transaction:
+  1. Check scenario.base_version_id == current version; if not, return 409 "Campus state changed since this simulation - re-run."
+  2. Write Approval + PublishedVersion(version_no+1).
+  3. For each changed session write SessionOverride(version, old_room, new_room, reason=scenario label + cause). Reason text is stored and is the ONLY source the AI may use to explain a change.
+  4. Make scenario closures real (RoomUnavailability with version_id) for ROOM/FLOOR/RESERVE changes; apply CHANGE_STRENGTH (history row); create section + entries for ADD_SECTION; create dated overrides for MOVE_CLASS.
+  5. Create Notification rows: audience FACULTY(faculty_id) and SECTION(section_id) per affected session, plus ROLE(MANAGEMENT) summary.
+  6. Write AuditLog.
+  Revert: management can revert a version (deactivate its overrides/unavailabilities, mark reverted, notify again).
+
+--------------------------------------------------------------------------
+PART 9 - CONNECTED WORKFLOW (MUST DEMONSTRABLY WORK)
+--------------------------------------------------------------------------
+After publish, with NO manual steps: faculty dashboard shows "DBMS -> new room"; student dashboard shows "Room changed: OLD -> NEW" with the stored reason (if the role may see it); Navigation to that class routes to the new room; the AI answers with the new room; management dashboard utilization and room status reflect the new state; unavailable rooms are excluded from future allocation.
+Other chains using the same engine:
+  Event created (Events page, reserves rooms) -> RoomUnavailability -> state changes -> validation flags NEEDS_REALLOCATION -> "Check impact" opens a prefilled scenario -> same simulate/approve/publish path.
+  Maintenance ticket -> management marks room unavailable for a period -> same chain. Resolved + "mark available" reopens the room.
+  New section -> ADD_SECTION scenario -> shortage explanation or allocation.
+Frontend refreshes using polling (TanStack Query refetchInterval 4-5 s) plus a notification bell with unread count and toast on new notifications.
+
+--------------------------------------------------------------------------
+PART 10 - CAMPUS AI ASSISTANT
+--------------------------------------------------------------------------
+Endpoint POST /api/ai/chat {message, conversation_id?}. Role-aware. Returns {answer, sources[], tool_calls[], mode: "rule-based"|"llm", scenario_draft?}.
+Tools (functions over the DB; authorization enforced INSIDE each tool using the JWT user, not in the prompt):
+  get_my_timetable(date), get_next_class(), get_class_room(subject?, date?), where_is_room(code_or_name) (block, floor, type, capacity, current status), list_events(range), list_opportunities(filters), get_next_assessment(), list_announcements(), explain_room_change(subject?, date?) (reads ONLY the stored override reason + scenario label; if none: "No reason was recorded"), search_faq(query), faculty: get_my_schedule(), management only: create_scenario_from_text(text) and get_scenario_summary(id).
+There is NO tool that publishes or edits the timetable.
+Rule-based router (NullProvider, default, must cover the demo): intent patterns + fuzzy matching for subjects and room codes: "where is my next class", "what classes do I have today/tomorrow", "where is A201", "where is my DBMS class (today)", "why was it changed", "what events this week", "what hackathons are available", "when is my next assessment/internal", "what is my schedule" ; management: natural-language what-if (below).
+LLM mode (when LLM_PROVIDER set): function-calling loop over the same tools; system prompt forces: answer only from tool results; say "not available" if absent; never invent; keep short. Send minimum necessary data (no names beyond display_name). On any LLM error fall back to rule-based mode and show a small "offline mode" badge.
+NL -> Scenario (nl_scenario.py): parse management text into the structured ScenarioChange JSON validated by Pydantic. LLM mode: JSON-schema output. Fallback parser must handle: room lists/ranges ("A101, A102 and A103", "A101-A106"), floors ("entire 1st floor"), times ("10 AM to 1 PM", "10 to 12"), dates ("today", "tomorrow", weekdays, "for three days"), reasons (event, maintenance, exam), strength changes ("CSE-B from 67 to 75"), counts ("five classrooms" -> STRESS_TEST). Show the interpretation as an editable form ("I understood this as: ...") BEFORE/WITH running the simulation; running a simulation is safe because it changes nothing. After results, the explanation text is generated from computed facts.
+UI must show a three-chip "Decision Trace" on scenarios: [AI interpreted] -> [Optimizer computed] -> [Human approved], with timestamps/actors. Responsible-AI badge text: "AI interprets and explains. The optimizer decides. Management approves."
+
+--------------------------------------------------------------------------
+PART 11 - NAVIGATION (BLOCK A, HONEST DATA)
+--------------------------------------------------------------------------
+Graph (NetworkX) built from NavNode/NavEdge: Block A entrance -> per-floor lobby (stairs/lift nodes) -> rooms. Costs are RELATIVE walking-effort units from NavConfig (same_floor_cost, vertical_cost per floor), NOT meters; the UI says so. No GPS, no invented floor plans.
+Features: search room by code/name/type; returns block, floor, route steps ("Enter Block A -> go to 2nd floor (stairs) -> A201"), a schematic stacked-floor SVG (labelled "Schematic - not to scale") with the target floor/room highlighted; warning if the room is currently unavailable (and why); "Navigate" button on every class card. Accessible-route toggle is shown but disabled with "Accessibility data not available for Block A yet" unless Admin sets lift/ramp edges with accessible=true. Support avoiding unavailable rooms and routes via a closed floor if any edge is flagged closed. The same graph supplies distances to the optimizer (walking/faculty-movement terms).
+
+--------------------------------------------------------------------------
+PART 12 - OTHER MODULES (TIER 2)
+--------------------------------------------------------------------------
+Maintenance: faculty reports (room, category e.g. Projector/AC/Electrical/Furniture/Network/Other, description) -> MAINT-#### ticket; Maintenance role updates Reported -> Assigned -> In Progress -> Resolved; room card shows a maintenance warning while open. Optional rule-based category/priority suggestion (advisory; human confirms). Management can "Mark room unavailable for a period" from a ticket, which creates RoomUnavailability and offers "Check impact" (opens prefilled scenario).
+Events: management creates Event (title, category, window, rooms). On creation, rooms become unavailable for that window (RoomUnavailability ref=event) and the UI shows "N classes potentially affected" with a "Check impact" button.
+Opportunities: management publishes; students see them filtered by year, branch and category; (events and opportunities share one student page with tabs).
+Analytics: per-room utilization = occupied teaching cells / total teaching cells in the week (state the formula in the UI), free periods list, per-floor utilization chart, underutilized rooms list, shortage windows (cells where demand >= supply of suitable rooms). Recommendations in plain data-based language, e.g. "A201 has low academic utilization on Wednesday P5-P7". Do NOT mention energy/cost/electricity savings; show a note "Energy savings require building-system data not available in this pilot."
+Safety: Emergency button -> confirm dialog -> optional "share my selected location" (dropdown of Block A floor/room, NOT GPS) -> creates EmergencyEvent, notifies ROLE(SAFETY), shows "Alert sent to configured TEST contacts. This prototype does not guarantee emergency response." plus the configured emergency number (shows "NOT CONFIGURED" until set). Incident reporting form (category: harassment, bullying, faculty-related, student-related, campus safety, other; description; date/time; location; optional evidence file <= 5 MB jpg/png/pdf stored under a random filename): returns INC-#### and tracks Submitted -> Under Review -> Action Taken -> Closed. Reporter sees only own incidents' code/status/history. Safety role sees the queue and decrypted content (audited). Management sees only aggregate counts, never content.
+Admin (Management): room editor (capacity, type, allocatable, department, facilities, status), section strength editor, floor/room mapping editor, settings (capacity_basis, attendance_factor, lab_batches, at_risk_min_backups, demo clock), CSV timetable import, Needs-Review queue, Data Reconciliation panel, audit log viewer, nav config.
+
+--------------------------------------------------------------------------
+PART 13 - AUTH, RBAC, SECURITY
+--------------------------------------------------------------------------
+Email + password login, bcrypt hashing, JWT (8 h) sent as Bearer token. FastAPI dependency require_roles(...) on every router; PLUS ownership checks (student -> only own section; faculty -> only own entries; incidents -> reporter or Safety only). CORS limited to http://localhost:5173. Pydantic validation on all inputs. File upload: type + size check, random filename, not served statically (served only through an authorized endpoint). Incident description/location encrypted with Fernet (APP_ENCRYPTION_KEY). AuditLog entries for: login, scenario create/simulate/approve/publish/revert, setting changes, incident view/status change, emergency trigger, role-sensitive reads. Do not log secrets. Data minimization: students are anonymous codes in seed data. Write docs/SECURITY.md describing exactly what is implemented (and what is not, e.g. no MFA, localStorage token in the POC).
+DEMO_MODE=true shows "Demo quick login" chips on the login page. Seeded accounts (all password Demo@1234, clearly labelled DEMO ONLY):
+  management@demo.local (MANAGEMENT)
+  student.3cse-a@demo.local (STUDENT, 3CSE-A), student.2cse-b@demo.local (2CSE-B), student.1a@demo.local (1-A)
+  faculty.cse1@demo.local (FACULTY, teaches DBMS to 3CSE-A and 3CSE-B), faculty.cse2@demo.local, faculty.ise1@demo.local
+  maintenance@demo.local (MAINTENANCE)
+  safety@demo.local (SAFETY, can_view_incidents)
+
+--------------------------------------------------------------------------
+PART 14 - API SURFACE (REST, JSON, prefix /api)
+--------------------------------------------------------------------------
+auth: POST /auth/login, GET /auth/me
+campus: GET /blocks, /blocks/{id}/floors, /floors/{id}/rooms, /rooms/{id} (schedule, availability, utilization, maintenance), GET /rooms/search?q=
+timetable: GET /timetable/me?date=, /timetable/section/{id}?week=, /timetable/faculty/me?date=, /sessions/{entry_id}?date=
+state: GET /state/overview?at=, GET /state/validation?date_from&date_to, GET /state/backup-pool?date&slot&session_key
+scenarios: POST /scenarios, GET /scenarios, GET/PUT/DELETE /scenarios/{id}, POST /scenarios/{id}/simulate (returns runs/options), GET /scenarios/{id}/result, POST /scenarios/compare {ids}, POST /scenarios/presets/{key}, POST /scenarios/from-text
+publish: POST /scenarios/{id}/review, /approve-publish {run_id, comment}, /reject, GET /versions, POST /versions/{id}/revert
+notifications: GET /notifications, POST /notifications/{id}/read
+ai: POST /ai/chat, POST /ai/scenario-from-text
+navigation: GET /nav/route?to=&from=&accessible=
+maintenance: POST/GET /tickets, PATCH /tickets/{id}, POST /rooms/{id}/unavailable
+events/opportunities/announcements/assessments: CRUD (management create; students read filtered)
+safety: POST /emergency, POST/GET /incidents, PATCH /incidents/{id}/status, GET /incidents/{id}/evidence
+analytics: GET /analytics/utilization, /analytics/recommendations, /analytics/shortages
+admin: rooms/sections/settings/import/review-queue/reconciliation/audit/clock
+Autogenerate OpenAPI docs at /docs. Use consistent error format {detail, code}.
+
+--------------------------------------------------------------------------
+PART 15 - FRONTEND SPEC
+--------------------------------------------------------------------------
+Visual direction: clean, professional "campus operations" look; light theme with a dark navy sidebar; accent teal; status colours: Available green, Occupied blue, Unavailable red, Reserved amber, At-risk orange, Floating dark red. Responsive (usable on a phone for the student view). Skeleton loaders, empty states, error toasts. No heavy animation. Persistent top banner chip: "Block A Pilot Implementation"; provenance legend; footer "AI interprets and explains. The optimizer decides. Management approves."
+LOGIN: professional "Campus Intelligence" page, email/password, demo quick-login chips when DEMO_MODE.
+ROLE ROUTING: after login redirect by role; sidebar shows only that role's pages.
+STUDENT: Dashboard (hero card "Next Class: DBMS - 10:00 AM - A201" with ROOM CHANGED badge old->new + reason when changed; today's timetable; room-change alerts; upcoming assessments; announcements; events & opportunities widgets; quick buttons Navigate / Ask AI / Emergency), Timetable (week grid), class detail drawer (subject, faculty, time, room, Navigate), Navigation, Assistant (chat, shows sources and "offline mode" badge), Events & Opportunities (tabs + filters), Safety (Emergency, Report Incident, My Reports).
+FACULTY: Dashboard (today's classes, rooms, room changes, announcements, events), Timetable, Report Maintenance Issue (form + my tickets with status), Assistant, Events.
+MANAGEMENT: 
+  Overview (KPI cards: total resources, available/occupied/unavailable now, labs, seminar halls, common-use rooms; allocation summary computed by validation; utilization by floor chart; active maintenance; upcoming events; recent scenarios; "As of" date-time picker),
+  Block Explorer (Block A -> Basement, Ground, 1st..5th; click floor -> room cards with capacity/type/status; click room -> drawer with schedule strip by day/period, free periods, facilities, department, maintenance status, utilization, "Mark unavailable", provenance chips),
+  Allocation Intelligence (validation results grouped: allocated / at-risk / floating / conflicts / capacity violations with reasons; dynamic backup pool viewer for any day+period; Data Reconciliation link),
+  What-If Simulator (preset buttons, manual builder, natural-language box "Describe a scenario", objective preference selector; Simulate -> Impact Analysis page: KPI strip (affected rooms/classes/sections/faculty, alternatives found, room changes, floating, conflicts, feasibility), Option 1/2/3 cards with metrics and badges (Recommended, Feasible/Partial/Infeasible), before/after diff table, per-assignment "Why this room?" expanders, unresolved section with shortage statement + recovery suggestions, utilization before/after, Decision Trace chips; buttons: Add to comparison, Review Scenario),
+  Compare (side-by-side table + simple bar chart highlighting least disruption),
+  Review & Approve (selected option summary, affected classes, proposed room changes, buttons Reject / Modify / Run Again / Approve & Publish with confirmation modal and comment),
+  Scenarios list (status pipeline), Published Versions (history, revert),
+  Events (create with room reservation + Check impact), Maintenance board (tickets, mark room unavailable), Utilization & Recommendations, Safety summary (counts only), Admin (PART 12), Audit log.
+MAINTENANCE: ticket board. SAFETY: incident queue + detail (decrypt on open) + emergency events.
+Typed API client in src/api; central auth context; protected routes; the Query client refetches dashboards on notification arrival.
+
+--------------------------------------------------------------------------
+PART 16 - SEED AND SYNTHETIC DATA POLICY
+--------------------------------------------------------------------------
+seed_all.py: create schema, Block A + floors + rooms (PART 4), departments, sections, subjects, faculty, users, entries, then run initial allocation; also seed a few announcements, assessments, events, opportunities, FAQ rows, and nav graph. EVERYTHING not given in this spec is tagged SYNTHETIC/ESTIMATED and visibly chipped in the UI. Never present synthetic data as real college data.
+synthetic_timetable.py: seeded RNG (fixed seed, configurable DENSITY default 0.65). For each section per day Mon-Fri: ~5 theory periods + weekly lab blocks (CSE sections: 1-2 lab blocks/week in CSE labs; first-year: Physics/Chemistry/AIML labs). CSE subjects (SYNTHETIC names, editable): 3rd year includes DBMS, DAA, MAD, CN, OS; 2nd/4th years generic names. Faculty are synthetic ("Faculty CSE-01", ...) with NO faculty or section double-booking (generator enforces). After generation, run the optimizer on the template week; if infeasible reduce density or reseed (max 10 tries) and log in SEED_REPORT.md.
+SEED_REPORT.md must list: counts per table, provenance counts, rooms by type, template-week occupancy heatmap (rooms x periods), home-room shortfall list (Data Reconciliation), PDF import result, and the hero-scenario preflight results.
+SEED TUNING RULES (change SYNTHETIC data only, never PROVIDED data): the hero preset must (a) affect at least 4 sessions, (b) include at least one session of the demo student's section (3CSE-A) and one taught by faculty.cse1, (c) return at least 2 distinct options, at least one FEASIBLE; the "Floor 1 closure" preset must produce at least one honest unresolved class with a shortage explanation. Add a seed preflight that verifies this and prints PASS/FAIL.
+
+--------------------------------------------------------------------------
+PART 17 - HERO DEMO AND ACCEPTANCE CRITERIA
+--------------------------------------------------------------------------
+HERO PRESET "College Event": Block A, date = next working day, 10:00-13:00, reason College Event, rooms = the four 1st-floor classrooms that host the most scheduled sessions in that window (auto-selected by a query, editable; also provide the literal "A101-A104" preset from the brief), preference "keep first-year classes unchanged if possible".
+DEMO SCRIPT (automate steps 1-9 in scripts/demo_check.py using the API, printing PASS/FAIL per step; then verify visually in the browser):
+ 1 Login as management -> Overview shows Block A KPIs and a computed allocation summary.
+ 2 Allocation Intelligence shows validation findings with reasons and a backup pool for a chosen slot.
+ 3 Run the hero preset -> impact analysis with affected rooms/classes/sections/faculty, 2-3 distinct options with metrics, explanations, and (if any) honest unresolved classes.
+ 4 Run two more scenarios (smaller closure, different rooms) and compare.
+ 5 Review -> Approve & Publish the recommended option.
+ 6 Published state changed: new version exists; simulation of the same scenario before publish had not changed anything (assert DB unchanged).
+ 7 Login as faculty.cse1 -> sees DBMS in the new room; login as student.3cse-a -> sees "Room changed OLD -> NEW" and the reason.
+ 8 Student navigation route targets the new room; assistant "Where is my DBMS class today?" returns the new room; "Why was it changed?" returns the stored reason only.
+ 9 Management Overview/utilization reflect the new state; revert restores the old state.
+ 10 Edge: scenario with insufficient capacity returns PARTIAL/INFEASIBLE with the shortage statement and recovery suggestions (never a fake solution).
+Also verify: a closed (unavailable) room is never assigned; strict capacity is respected; maintenance -> room unavailable -> excluded; student cannot access another student's data or any incident but their own; Safety-only incident reads are audited.
+
+--------------------------------------------------------------------------
+PART 18 - TESTS AND DELIVERABLES
+--------------------------------------------------------------------------
+pytest (backend/tests), fast and meaningful:
+ - engine invariants over several random scenarios: no room double-booked in any cell, capacity respected, unavailable rooms unused, deterministic with fixed seed
+ - simulation isolation: production tables identical before/after simulate
+ - infeasible scenario returns shortage text and no fake assignment
+ - options are distinct; ranking sane
+ - publish -> overrides/notifications created; stale base version -> 409; revert works
+ - RBAC matrix (each role x key endpoints), incident privacy, AI tool authorization (student cannot query another section)
+ - AI rule-based router answers the PART 17 questions from DB state
+Deliverables: working app; README.md with complete setup for Windows and macOS/Linux (prereqs, venv, pip install -r, npm install, gen_keys, seed, run backend, run frontend, demo accounts, env vars, optional LLM setup, reset demo, troubleshooting); docs/ARCHITECTURE.md (diagram, module map, data model summary, optimizer description, how to add Block B); docs/SECURITY.md; SEED_REPORT.md; BUILD_STATUS.md; DECISIONS.md; scripts start/reset files; requirements.txt and package.json with every dependency.
+
+--------------------------------------------------------------------------
+PART 19 - BUILD ORDER (MILESTONES; VERIFY EACH BEFORE THE NEXT)
+--------------------------------------------------------------------------
+M1  Repo skeleton, config, DB, models, gen_keys, Block A master seed (rooms/floors/sections/users). Verify: seed runs, room counts correct, API /blocks works.
+M2  Time model, synthetic timetable, candidates, validation, initial CP-SAT allocation. Verify: zero conflicts, SEED_REPORT.md written, validation summary computed.
+M3  Scenario engine: state overlay, change types, optimizer presets, options, impact, explanations, recovery. Verify with pytest + a CLI/script run of the hero preset; isolation test.
+M4  Auth/RBAC, all Tier-1 routers, publish/approve/revert, notifications. Verify with demo_check.py steps 1-9 (API only).
+M5  Frontend foundation: login, role routing, layout, API client, Management Overview + Block Explorer + Allocation Intelligence.
+M6  Frontend simulator: presets/builder, Impact Analysis, options, diff, compare, review/approve-publish, versions.
+M7  Student and Faculty dashboards, timetable, class detail, notifications/polling, navigation graph + page.
+M8  AI assistant: tools, rule-based router, optional LLM providers, NL-to-scenario, assistant UI, Decision Trace chips.
+M9  Tier 2: maintenance, events, opportunities, analytics, safety/incidents/emergency, admin editor, reconciliation, PDF import attempt.
+M10 Hardening: run full pytest, demo_check.py, browser walkthrough with screenshots, fix everything, polish UI (empty/error states, provenance chips, banners), finalize README/docs.
+If time runs short, protect M1-M8 and mark unfinished Tier-2 items "Not enabled in pilot" in the UI and README.
+
+--------------------------------------------------------------------------
+PART 20 - HARD DON'TS
+--------------------------------------------------------------------------
+- Don't let the LLM choose rooms, publish, or invent campus facts.
+- Don't hard-code demo answers, fake metrics, or pre-baked results.
+- Don't present estimated/synthetic data as real; don't claim savings, emergency guarantees, or whole-college coverage.
+- Don't treat offices, staff rooms, meeting hall or common-use rooms as ordinary classrooms.
+- Don't create static "backup rooms"; backups are computed per time slot.
+- Don't auto-publish a simulation; don't let simulation touch production tables.
+- Don't expose incident content to non-Safety users or send sensitive data to the LLM.
+- Don't add features outside this spec (food ordering, push, Docker, microservices).
+==========================================================================
+END OF SPECIFICATION
+==========================================================================

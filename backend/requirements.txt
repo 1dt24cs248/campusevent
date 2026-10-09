@@ -1,0 +1,37 @@
+# Core
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+sqlalchemy>=2.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-multipart>=0.0.6
+
+# Auth & Security
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0
+cryptography>=41.0.0
+pytz>=2023.3
+
+# Optimization
+ortools>=9.7
+
+# Graph
+networkx>=3.0
+
+# PDF extraction (optional)
+pdfplumber>=0.10.0
+
+# Utilities
+python-dateutil>=2.8.0
+httpx>=0.25.0
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# Optional LLM providers (uncomment as needed)
+# google-genai
+# anthropic
+# openai

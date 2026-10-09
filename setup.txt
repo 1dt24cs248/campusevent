@@ -1,0 +1,240 @@
+==========================================================================
+CAMPUS INTELLIGENCE & ACTION PLATFORM - SETUP, BUILD AND DEMO GUIDE
+(Companion to 01_ANTIGRAVITY_MASTER_PROMPT.txt)
+==========================================================================
+
+--------------------------------------------------------------------------
+STEP 1 - INSTALL THE TOOLS (about 20 minutes, do this first)
+--------------------------------------------------------------------------
+1. Python 3.12 (3.11 also fine). Do NOT use 3.14 (OR-Tools wheels may not exist yet).
+   Windows: python.org -> Downloads -> tick "Add python.exe to PATH" in the installer.
+   Check:   python --version        (Windows may need:  py --version)
+2. Node.js 20 or 22 LTS from nodejs.org.
+   Check:   node --version   and   npm --version
+3. Git (optional but useful) from git-scm.com.   Check: git --version
+4. Google Antigravity: download from the official Antigravity site, install, sign in with your Google account.
+5. Optional (only if you want the AI assistant to use a real LLM):
+   - Gemini key: aistudio.google.com -> "Get API key"
+   - or an Anthropic / OpenAI key.
+   Skipping this is fine: the assistant works in "rule-based / offline mode".
+No PostgreSQL, Docker or Redis is needed. The app uses SQLite by default and can switch to PostgreSQL later via DATABASE_URL.
+
+--------------------------------------------------------------------------
+STEP 2 - PREPARE THE WORKSPACE
+--------------------------------------------------------------------------
+1. Create an empty folder, e.g.  C:\projects\campus-intelligence   (or ~/campus-intelligence).
+2. Copy 01_ANTIGRAVITY_MASTER_PROMPT.txt into it and RENAME it to:  PROJECT_SPEC.txt
+3. Create a subfolder  data  and put your real timetable PDF there as:  data/timetable.pdf
+   (optional; the agent will try to extract what it can and will not guess unclear rooms)
+4. Open the folder in Antigravity (File -> Open Folder).
+
+--------------------------------------------------------------------------
+STEP 3 - AGENT SETTINGS (names can differ slightly by version)
+--------------------------------------------------------------------------
+- Pick the strongest model available in the model dropdown.
+- Use the planning-style / agent mode for the first run (not the quick/fast mode).
+- Allow the agent to run terminal commands and install packages without asking each time (auto-run / "always proceed" style setting), otherwise it will stall waiting for you.
+- Keep the browser tool enabled; the spec asks the agent to test the running app in it.
+
+--------------------------------------------------------------------------
+STEP 4 - PASTE THIS LAUNCH MESSAGE INTO THE AGENT CHAT
+--------------------------------------------------------------------------
+Read PROJECT_SPEC.txt in the workspace root completely and build the entire project exactly as specified. Do not ask me questions; make reasonable decisions and log them in DECISIONS.md. Create BUILD_STATUS.md first and work through milestones M1 to M10 in order, verifying each one (run code, run tests) before moving on. Protect Tier 1 (the engine, What-If simulator, publish flow, dashboards, AI assistant) above everything else. At the end run the tests and scripts/demo_check.py, walk through the demo script in the browser, save screenshots, and write the README with full setup instructions.
+
+--------------------------------------------------------------------------
+STEP 5 - WHILE IT BUILDS
+--------------------------------------------------------------------------
+- Approve the plan it shows; you do not need to micro-manage.
+- Check BUILD_STATUS.md now and then. If the agent stops or the session ends, send:
+    Continue from the first unchecked milestone in BUILD_STATUS.md. Re-read PROJECT_SPEC.txt for that milestone first.
+- Most important milestones to protect: M2 (allocation), M3 (simulator), M4 (publish flow). If time is short, tell it:
+    Freeze Tier 2. Finish and polish M1-M8 only, and mark everything else "Not enabled in pilot".
+
+--------------------------------------------------------------------------
+STEP 6 - RUN IT YOURSELF (if the agent did not already start it)
+--------------------------------------------------------------------------
+BACKEND (terminal 1)
+  Windows (PowerShell):
+    cd campus-intelligence\backend
+    python -m venv .venv
+    .venv\Scripts\Activate.ps1          (if blocked: Set-ExecutionPolicy -Scope Process Bypass)
+    pip install -r requirements.txt
+    python -m app.seed.gen_keys         (creates backend\.env with JWT_SECRET and APP_ENCRYPTION_KEY)
+    python -m app.seed.seed_all         (creates campus.db, loads Block A, runs initial allocation)
+    uvicorn app.main:app --reload --port 8000
+  macOS / Linux:
+    cd campus-intelligence/backend
+    python3 -m venv .venv && source .venv/bin/activate
+    pip install -r requirements.txt
+    python -m app.seed.gen_keys
+    python -m app.seed.seed_all
+    uvicorn app.main:app --reload --port 8000
+  API docs: http://localhost:8000/docs
+
+FRONTEND (terminal 2)
+    cd campus-intelligence/frontend
+    npm install
+    npm run dev
+  App: http://localhost:5173
+
+Expected backend packages (requirements.txt): fastapi, uvicorn[standard], sqlalchemy, pydantic, pydantic-settings, python-multipart, pyjwt, bcrypt, cryptography, ortools, networkx, pdfplumber, python-dateutil, httpx, python-dotenv, pytest; optional: google-genai, anthropic, openai.
+Expected frontend packages: react, react-dom, react-router-dom, @tanstack/react-query, recharts, lucide-react, date-fns, tailwindcss (+ its Vite plugin), typescript, vite, @vitejs/plugin-react.
+
+INSTITUTIONAL IDENTITIES
+    Management can provision student and faculty accounts from the Student Management
+    and Faculty Management pages. Login accepts college email, student USN/roll number,
+    or faculty employee ID, plus the provisioned password. Existing demo accounts
+    continue to use their demo.local email addresses.
+    Student Dashboard, My Profile, My Academics, and My Timetable use the signed-in
+    student's own identity and section schedule. Subjects come from that section's
+    timetable assignments; syllabus, resources, attendance, and marks remain empty
+    unless they are actually published. Synthetic timetable/subject data is labelled.
+
+FACULTY TEACHING PORTAL
+    Faculty sign in with their provisioned employee ID or college email. Their
+    profile, assigned subjects/sections, teaching timetable, room changes, and
+    notifications are scoped to the authenticated faculty identity.
+    Faculty may start attendance for an assigned class, mark the section roster,
+    and review their session history. Student attendance shows only explicitly
+    recorded present/absent entries; missing attendance is not treated as absence.
+    Classroom requests are restricted to assigned subject/section pairs. Management
+    must confirm a room, and approval validates capacity, room status/type/facilities,
+    room unavailability, and room/faculty/section timetable conflicts. Approved
+    extra classes are surfaced through the existing timetable APIs for the affected
+    faculty and section, and notifications are sent to both audiences.
+
+ACADEMIC ERP
+    Student academics are scoped to the signed-in student's section. Published
+    syllabus modules, section-specific resources, assessments, marks, attendance
+    summaries, and role/section-targeted announcements are shown only when records
+    exist. Draft assessments and their marks are hidden from students until the
+    faculty member publishes the assessment. Faculty may add syllabus modules,
+    resources, assessments, and marks only for timetable-authorized subjects and
+    sections. Management Academic Management is a read-only master-data directory
+    plus a publisher for academic announcements; student-section assignments remain
+    managed through Student Management. New faculty-entered records inherit synthetic
+    provenance from synthetic academic assignments and are labelled in the portal.
+    No academic samples are seeded into the campus database.
+
+EVENT MANAGEMENT
+    Faculty can propose events for students, faculty, or both. Proposals remain
+    private to their creator and management until management approves and publishes
+    them. Students and faculty see only published upcoming events for their audience.
+    Event decisions and publication notifications use the existing scoped notification
+    system. Startup adds nullable event metadata columns to legacy databases without
+    rewriting existing event rows.
+
+CAMPUS FOOD / CANTEEN
+    Management creates food stalls linked to existing active campus rooms, then
+    creates dated menus with item descriptions, categories, prices, dietary notes,
+    and availability. New menus stay private as drafts until explicitly published;
+    unpublishing hides them from student and faculty APIs. Students and faculty
+    can browse only published menus by campus-local date. No sample stalls or
+    food menus are seeded. Existing food-item rows are retained and migrated into
+    published legacy menus so previously visible entries are not lost. Startup
+    adds food metadata columns and the new food_menus table additively.
+
+DATABASE SAFETY
+    The reset_demo scripts delete the selected campus.db and recreate synthetic data.
+    Use them only with a disposable demo database after confirming its configured path.
+    Never use them with a shared, production, or real-campus database. Schema upgrades
+    performed by app startup are additive and preserve existing rows. Faculty phase
+    adds new classroom-request and attendance-session/record tables; event management
+    adds nullable metadata columns to the existing events table. Academic startup
+    adds nullable subject description/credit metadata, assessment metadata and
+    publication status, and an optional announcement section scope. It creates
+    syllabus_modules, academic_resources, and academic_marks tables; attendance
+    reuses the existing attendance tables. Legacy assessments are retained and
+    treated as published for compatibility. Neither phase resets existing timetable,
+    student, notification, scenario, or published-version data.
+
+RUN THE CHECKS
+    Never run validation with DATABASE_URL pointing to backend/campus.db. For
+    isolated SQLite pytest runs in PowerShell:
+      cd backend
+      $env:DATABASE_URL = "sqlite://"
+      pytest test_academics.py -q
+      pytest test_student_portal.py test_faculty_portal.py test_identity.py test_events.py test_food.py test_actions.py
+    For a browser run, use a dedicated disposable file database in DATABASE_URL,
+    a dedicated backend port, and delete only that validation database afterward.
+
+--------------------------------------------------------------------------
+STEP 7 - OPTIONAL: TURN ON A REAL LLM
+--------------------------------------------------------------------------
+Edit backend/.env:
+    LLM_PROVIDER=gemini            (or anthropic / openai; default none)
+    LLM_API_KEY=your_key_here
+    LLM_MODEL=<a model name from that provider's current docs>
+Restart the backend. The assistant badge changes from "offline mode" to "LLM". If the key fails or the network drops, it falls back to rule-based mode automatically (useful on competition Wi-Fi).
+Never commit .env to Git.
+
+--------------------------------------------------------------------------
+STEP 8 - DEMO ACCOUNTS (DEMO ONLY, password for all: Demo@1234)
+--------------------------------------------------------------------------
+management@demo.local          Management
+student.3cse-a@demo.local      Student, 3rd Year CSE-A
+student.2cse-b@demo.local      Student, 2nd Year CSE-B
+student.1a@demo.local          Student, 1st Year A
+faculty.cse1@demo.local        Faculty (teaches DBMS to 3CSE-A and 3CSE-B)
+faculty.cse2@demo.local        Faculty
+faculty.ise1@demo.local        Faculty
+maintenance@demo.local         Maintenance
+safety@demo.local              Safety officer (can view incidents)
+Use the "Demo quick login" chips on the login page.
+
+--------------------------------------------------------------------------
+STEP 9 - 7-MINUTE DEMO SCRIPT (competition story)
+--------------------------------------------------------------------------
+Use two windows: management on the laptop, student on a phone (or a second browser window), faculty in a third.
+1. (30 s) Problem: events/maintenance close rooms; managers find out the damage only after deciding.
+2. (45 s) Management Overview + Allocation Intelligence: Block A pilot, computed utilization, floating / at-risk detection, dynamic backup pool for one period.
+3. (90 s) What-If Simulator: run the "College Event" hero preset (type it in plain English once to show the AI interpretation card). Show impact analysis, 2-3 options, "Why this room?", and the honest unresolved class with the shortage statement.
+4. (45 s) Compare a smaller closure against the big one; show the least-disruptive scenario.
+5. (30 s) Review -> Approve & Publish. Point out that nothing changed until this click (Decision Trace: AI interpreted -> Optimizer computed -> Human approved).
+6. (60 s) Student phone: dashboard shows "Room changed OLD -> NEW" with the reason; tap Navigate. Faculty window already shows the new room.
+7. (45 s) Ask the assistant "Where is my DBMS class today?" then "Why was it changed?".
+8. (30 s) Back to management: updated utilization and published version history; show Revert.
+9. (30 s) Close with Responsible AI + security: AI interprets and explains, the optimizer decides, management approves; RBAC, encrypted incident reports, audit log; Block A pilot with an architecture that adds Block B without a redesign.
+Record a backup screen video of this exact run before the competition.
+
+--------------------------------------------------------------------------
+STEP 10 - DATA YOU SHOULD REVIEW BEFORE DEMO DAY (important)
+--------------------------------------------------------------------------
+Open Admin and the Data Reconciliation panel.
+1. Capacities: A101-A108 and the basement rooms are the values you gave. 2nd-5th floor capacities, spare-room names/capacities, lab capacities, facilities and first-year section count/strengths are ESTIMATED placeholders. Replace them with real values in Admin (changes take effect immediately; re-run simulations).
+2. Several of your CSE strengths are larger than their conceptual home-room capacities (for example 2CSE-A 63 vs A101 60, 4CSE-B 70 vs A108 55). The system treats capacity as a hard rule, so it will not place them there. The panel lists every shortfall. If the capacities you gave are "approximate seats" and real attendance is lower, management can switch capacity basis to EXPECTED_ATTENDANCE and set the factor in Admin; leave it strict unless you can justify the factor.
+3. Timetable: unless the PDF import parsed cleanly, the timetable is SYNTHETIC and shows a "SAMPLE DATA" chip. Say so honestly in the presentation. If you can type or paste the real timetable into data/timetable_template.csv and import it in Admin, do that for at least the sections you demo.
+4. Emergency number and test contacts are placeholders ("NOT CONFIGURED" / TEST). Do not claim live emergency integration.
+
+--------------------------------------------------------------------------
+STEP 11 - READY-MADE FOLLOW-UP PROMPTS (paste when needed)
+--------------------------------------------------------------------------
+A) Run scripts/demo_check.py and pytest. Fix every failure at the root cause (no test-only hacks) and show me the final output.
+B) The hero preset does not give 2+ distinct options or does not affect the demo student. Tune ONLY the synthetic timetable seed (never provided data), re-seed, and show the preflight PASS output.
+C) Polish pass: consistent spacing, empty/loading/error states, provenance chips and legend, mobile layout for the student pages, readable impact analysis page. Do not change engine logic.
+D) Walk through the 10-step demo script in the browser, fix every visual or functional problem, and update docs/screenshots.
+E) Add the real timetable for sections <list> from data/timetable_template.csv, import it, and show which rows needed review.
+F) Review security: RBAC on every endpoint, incident privacy, audit entries, file upload checks. Fix gaps and update docs/SECURITY.md.
+
+--------------------------------------------------------------------------
+STEP 12 - TROUBLESHOOTING
+--------------------------------------------------------------------------
+- "ortools" fails to install: use Python 3.11 or 3.12 and upgrade pip first (python -m pip install --upgrade pip).
+- PowerShell blocks venv activation: Set-ExecutionPolicy -Scope Process Bypass, then activate again.
+- Frontend cannot reach the API / CORS error: backend must run on port 8000; frontend on 5173; Vite proxy maps /api.
+- Port already in use: close the old process or change the port in both the start command and vite.config.ts.
+- Login fails after reseeding: clear the browser's local storage (the old token is invalid) and log in again.
+- Solver slow: raise or lower SOLVER_TIME_LIMIT_SEC in backend/.env; the problem is small and should finish in seconds.
+- Dates look wrong ("tomorrow" has no classes): tomorrow may be Sunday; the UI uses the next working day. You can also set the demo clock in Admin.
+- Antigravity stops mid-build: use the "Continue from the first unchecked milestone" message.
+
+--------------------------------------------------------------------------
+STEP 13 - COMPETITION CHECKLIST
+--------------------------------------------------------------------------
+[ ] Seed data reviewed; synthetic data labelled and disclosed
+[ ] pytest and demo_check.py pass
+[ ] Full demo rehearsed 3 times, backup video recorded
+[ ] Works offline: assistant in rule-based mode, local database
+[ ] Slides: problem, Block A pilot, architecture (engine decides, AI interprets, human approves), measured numbers only (classes affected, options found, solve time, rooms changed), security and privacy, scalability path (Block B..., Postgres, more constraints)
+[ ] Claims avoided: energy/cost savings, whole-college coverage, guaranteed emergency response
+==========================================================================

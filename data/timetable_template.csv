@@ -1,0 +1,11 @@
+section_code,weekday,slot,subject_code,subject_name,kind,lab_kind,faculty_code,room_code,provenance
+3CSE-A,MON,P1,DBMS,Database Management Systems,THEORY,,FAC-CSE-01,A104,SYNTHETIC
+3CSE-A,MON,P3,DAA,Design & Analysis of Algorithms,THEORY,,FAC-CSE-03,A104,SYNTHETIC
+3CSE-A,TUE,P2,MAD,Mobile App Development,THEORY,,FAC-CSE-05,A104,SYNTHETIC
+3CSE-A,TUE,P5,CN,Computer Networks,THEORY,,FAC-CSE-07,A104,SYNTHETIC
+3CSE-A,WED,P1,OS,Operating Systems,THEORY,,FAC-CSE-09,A104,SYNTHETIC
+3CSE-A,WED,P3,DBMS,Database Management Systems,THEORY,,FAC-CSE-01,A104,SYNTHETIC
+3CSE-A,THU,P1,DAA,Design & Analysis of Algorithms,THEORY,,FAC-CSE-03,A104,SYNTHETIC
+3CSE-A,THU,P3,MAD,Mobile App Development,THEORY,,FAC-CSE-05,A104,SYNTHETIC
+3CSE-A,FRI,P2,CN,Computer Networks,THEORY,,FAC-CSE-07,A104,SYNTHETIC
+3CSE-A,FRI,P4,OS,Operating Systems,THEORY,,FAC-CSE-09,A104,SYNTHETIC
