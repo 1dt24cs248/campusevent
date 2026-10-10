@@ -536,9 +536,11 @@ def get_faculty_subject_catalog(
     }
     subjects = db.query(Subject).join(
         TimetableEntry, TimetableEntry.subject_id == Subject.id
-    ).filter(
-        TimetableEntry.section_id.in_(eligible_section_ids)
-    ).distinct().order_by(Subject.code, Subject.name).all()
+        ).filter(
+            TimetableEntry.section_id.in_(eligible_section_ids)
+            ).order_by(Subject.code, Subject.name).all()
+    subjects = list({subject.id: subject for subject in subjects}.values())
+    subjects.sort(key=lambda subject: (subject.code or "", subject.name or ""))
     eligible_subjects = [
         (subject, _eligible_sections(db, faculty, subject))
         for subject in subjects
