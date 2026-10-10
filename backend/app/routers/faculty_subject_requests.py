@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.audit import log_audit
 from app.clock import get_now
+from app.timetable_lock import acquire_timetable_state_lock
 from app.deps import get_db, require_roles
 from app.engine.slots import PERIOD_SLOTS, SLOTS
 from app.models.academic import Department, Faculty, FacultyTeachingEligibility, Section, Subject
@@ -783,6 +784,7 @@ def publish_faculty_subject_assignments(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(["MANAGEMENT"])),
 ):
+    acquire_timetable_state_lock(db)
     request = db.query(FacultySubjectRequest).filter(FacultySubjectRequest.id == request_id).with_for_update().first()
     item = db.query(FacultySubjectRequestItem).filter(
         FacultySubjectRequestItem.id == item_id,

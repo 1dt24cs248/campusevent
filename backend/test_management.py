@@ -46,13 +46,15 @@ def management_client():
             Room(
                 id="management-room-a101", block_id="management-block-a", floor_id="management-floor-1",
                 code="A101", display_name="Classroom A101", aliases=[], resource_type="CLASSROOM",
-                capacity=60, allocatable_for_classes=True, reservable_for_events=False,
+                capacity=60, capacity_provenance="PROVIDED",
+                allocatable_for_classes=True, reservable_for_events=False,
                 facilities=[], status="ACTIVE", is_spare=False,
             ),
             Room(
                 id="management-room-a201", block_id="management-block-a", floor_id="management-floor-2",
                 code="A201", display_name="Classroom A201", aliases=[], resource_type="CLASSROOM",
-                capacity=70, allocatable_for_classes=True, reservable_for_events=False,
+                capacity=70, capacity_provenance="PROVIDED",
+                allocatable_for_classes=True, reservable_for_events=False,
                 facilities=[], status="ACTIVE", is_spare=False,
             ),
             Section(id="management-section-a", department_id="management-dept-a", code="TEST-A",

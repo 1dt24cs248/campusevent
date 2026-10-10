@@ -39,6 +39,7 @@ class FloorResponse(FloorBase):
 
 class BlockBase(BaseModel):
     id: str
+    code: str
     name: str
 
 class BlockResponse(BlockBase):

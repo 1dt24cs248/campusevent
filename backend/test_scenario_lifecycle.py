@@ -4,18 +4,38 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
+from app.clock import get_now
 from app.deps import get_db
 from app.main import app
-from app.models import Block, Department, Faculty, Floor, Room, Section, Student, Subject, User
+from app.models import (
+    Block,
+    Department,
+    Faculty,
+    FacultyTeachingEligibility,
+    Floor,
+    Room,
+    Section,
+    Student,
+    Subject,
+    User,
+)
 from app.models.identity import AuditLog
 from app.models.schedule import SessionOverride, TimetableEntry
+from app.models.faculty_work import (
+    FacultySubjectAssignment,
+    FacultySubjectRequest,
+    FacultySubjectRequestItem,
+)
 from app.models.scenario import PublishedVersion
 from app.models.workflow import Notification
 from app.security import create_access_token
+from app.timetable_lock import acquire_timetable_state_lock
+from app.routers.scenarios import _timetable_state_fingerprint
 
 
 @pytest.fixture()
@@ -53,14 +73,16 @@ def scenario_client():
         db.add_all([
             Room(
                 id="life-room-101", block_id="life-block", floor_id="life-floor-1",
-                code="V101", display_name="Validation Room 101", aliases=[],
-                resource_type="CLASSROOM", capacity=50, allocatable_for_classes=True,
+                code="A101", display_name="Classroom A101", aliases=[],
+                resource_type="CLASSROOM", capacity=50, capacity_provenance="PROVIDED",
+                allocatable_for_classes=True,
                 reservable_for_events=False, facilities=[], status="ACTIVE", is_spare=False,
             ),
             Room(
                 id="life-room-201", block_id="life-block", floor_id="life-floor-2",
                 code="V201", display_name="Validation Room 201", aliases=[],
-                resource_type="CLASSROOM", capacity=60, allocatable_for_classes=True,
+                resource_type="CLASSROOM", capacity=60, capacity_provenance="PROVIDED",
+                allocatable_for_classes=True,
                 reservable_for_events=False, facilities=[], status="ACTIVE", is_spare=False,
             ),
             Section(
@@ -146,17 +168,27 @@ def test_room_unavailable_publish_revert_notifications_and_rbac(scenario_client)
     client, tokens, session_factory = scenario_client
     manager = tokens["management"]
     scenario, simulation = _create_and_simulate(
-        client, manager, "Close V101", "ROOM_UNAVAILABLE", "ROOM_UNAVAILABLE",
-        {"room_ids": ["life-room-101"], "time_from": "00:00", "time_to": "23:59"},
+        client, manager, "Close A101", "ROOM_UNAVAILABLE", "ROOM_UNAVAILABLE",
+        {
+            "room_ids": ["life-room-101"],
+            "weekdays": [0, 1, 2, 3, 4, 5],
+            "time_from": "08:00",
+            "time_to": "18:00",
+        },
     )
     assert simulation["affected_count"] == 1
     result = simulation["options"][0]
     assert result["run_id"]
     assert result["result_rows"][0]["status"] == "REASSIGNED"
     assert result["result_rows"][0]["subject_code"] == "VAL101"
-    assert result["result_rows"][0]["original_room_code"] == "V101"
+    assert result["result_rows"][0]["original_room_code"] == "A101"
     assert result["result_rows"][0]["assigned_room_code"] == "V201"
+    assert result["result_rows"][0]["original_room_capacity_provenance"] == "PROVIDED"
+    assert result["result_rows"][0]["room_capacity_provenance"] == "PROVIDED"
     assert result["result_rows"][0]["reason"]
+    with session_factory() as db:
+        assert db.query(TimetableEntry).filter_by(id="life-entry").one().base_room_id == "life-room-101"
+        assert db.query(SessionOverride).count() == 0
 
     assert client.post(
         f"/api/scenarios/{scenario['id']}/review", headers=manager,
@@ -182,13 +214,14 @@ def test_room_unavailable_publish_revert_notifications_and_rbac(scenario_client)
         assert override.active is True
         assert override.old_room_id == "life-room-101"
         assert override.room_id == "life-room-201"
+        scheduled_date = override.date.date().isoformat()
+        assert date.fromisoformat(scheduled_date).weekday() == date.today().weekday()
         assert db.query(AuditLog).filter_by(
             action="APPROVE_PUBLISH", entity_id=publication["version_id"],
         ).count() == 1
 
-    today = date.today().isoformat()
     published_timetable = client.get(
-        "/api/timetable/me", headers=tokens["student"], params={"date": today},
+        "/api/timetable/me", headers=tokens["student"], params={"date": scheduled_date},
     )
     assert published_timetable.status_code == 200, published_timetable.text
     assert published_timetable.json()[0]["effective_room_code"] == "V201"
@@ -236,10 +269,10 @@ def test_room_unavailable_publish_revert_notifications_and_rbac(scenario_client)
             ("FACULTY", "life-faculty-record"),
         }
     reverted_timetable = client.get(
-        "/api/timetable/me", headers=tokens["student"], params={"date": today},
+        "/api/timetable/me", headers=tokens["student"], params={"date": scheduled_date},
     )
     assert reverted_timetable.status_code == 200, reverted_timetable.text
-    assert reverted_timetable.json()[0]["effective_room_code"] == "V101"
+    assert reverted_timetable.json()[0]["effective_room_code"] == "A101"
 
     for role in ("student", "faculty"):
         affected_notifications = client.get(
@@ -274,7 +307,7 @@ def test_floor_unavailable_and_stress_metrics_are_data_derived(scenario_client):
     assert floor_result["affected_count"] == 1
     floor_row = floor_result["options"][0]["result_rows"][0]
     assert floor_row["timetable_entry_id"] == "life-entry"
-    assert floor_row["original_room_code"] == "V101"
+    assert floor_row["original_room_code"] == "A101"
     assert floor_row["status"] == "REASSIGNED"
     assert floor_row["assigned_room_code"] == "V201"
     assert floor_scenario["base_version_id"] is None
@@ -303,6 +336,151 @@ def test_floor_unavailable_and_stress_metrics_are_data_derived(scenario_client):
     assert metrics["unchanged_classes"] == 0
     assert metrics["unresolved_classes"] == 0
     assert stress["result_rows"][0]["status"] == "REASSIGNED"
+
+
+def test_move_class_slot_is_returned_and_published(scenario_client):
+    client, tokens, session_factory = scenario_client
+    manager = tokens["management"]
+    scenario, simulation = _create_and_simulate(
+        client, manager, "Move validation class", "MOVE_CLASS", "MOVE_CLASS",
+        {"entry_id": "life-entry", "new_start_slot": "P2"},
+    )
+    result = simulation["options"][0]
+    assert result["status"] == "FEASIBLE"
+    assert result["result_rows"][0]["start_slot"] == "P2"
+    assert result["result_rows"][0]["start_time"] == "10:25"
+
+    published = client.post(
+        f"/api/scenarios/{scenario['id']}/approve-publish",
+        headers=manager,
+        json={"run_id": result["run_id"], "comment": "Publish slot change."},
+    )
+    assert published.status_code == 200, published.text
+    assert published.json()["overrides_created"] == 1
+    assert published.json()["notifications_created"] == 2
+    with session_factory() as db:
+        override = db.query(SessionOverride).filter_by(
+            version_id=published.json()["version_id"], entry_id="life-entry",
+        ).one()
+        assert override.room_id == "life-room-101"
+        assert override.start_slot_override == "P2"
+        assert {
+            notice.type for notice in db.query(Notification).all()
+        } == {"CLASS_TIME_CHANGED"}
+
+
+def test_affected_classes_reject_section_faculty_and_occupied_room_conflicts(scenario_client):
+    client, tokens, session_factory = scenario_client
+    with session_factory() as db:
+        db.add(TimetableEntry(
+            id="life-conflicting-entry",
+            section_id="life-section",
+            subject_id="life-subject",
+            faculty_id="life-faculty-record",
+            weekday=date.today().weekday(),
+            start_slot="P1",
+            duration_slots=1,
+            kind="THEORY",
+            base_room_id="life-room-201",
+            required_facilities=[],
+        ))
+        db.commit()
+
+    scenario, simulation = _create_and_simulate(
+        client, tokens["management"], "Close conflicted room",
+        "ROOM_UNAVAILABLE", "ROOM_UNAVAILABLE",
+        {"room_ids": ["life-room-101"], "time_from": "00:00", "time_to": "23:59"},
+    )
+    result = simulation["options"][0]
+    assert result["status"] == "PARTIAL"
+    unresolved = result["unresolved"][0]
+    assert "Faculty conflict" in unresolved["reason"]
+    assert "Section conflict" in unresolved["reason"]
+    occupied_room = next(
+        candidate for candidate in unresolved["near_miss_rooms"]
+        if candidate["room"] == "V201"
+    )
+    assert any("occupied during" in reason for reason in occupied_room["reasons"])
+    rejected_publish = client.post(
+        f"/api/scenarios/{scenario['id']}/approve-publish",
+        headers=tokens["management"],
+        json={"run_id": result["run_id"]},
+    )
+    assert rejected_publish.status_code == 400
+
+
+def test_insufficient_verified_capacity_leaves_class_unresolved(scenario_client):
+    client, tokens, session_factory = scenario_client
+    with session_factory() as db:
+        db.query(Room).filter_by(id="life-room-201").one().capacity = 30
+        db.commit()
+
+    _, simulation = _create_and_simulate(
+        client, tokens["management"], "Close A101 with undersized alternative",
+        "ROOM_UNAVAILABLE", "ROOM_UNAVAILABLE",
+        {"room_ids": ["life-room-101"], "weekdays": [0, 1, 2, 3, 4, 5],
+         "time_from": "08:00", "time_to": "18:00"},
+    )
+    result = simulation["options"][0]
+    assert simulation["affected_count"] == 1
+    assert result["status"] == "PARTIAL"
+    assert result["assignments"] == {}
+    assert result["unresolved"][0]["entry_id"] == "life-entry"
+    alternative = next(
+        room for room in result["unresolved"][0]["near_miss_rooms"]
+        if room["room"] == "V201"
+    )
+    assert "capacity 30 < strength 40" in alternative["reasons"]
+
+
+def test_no_suitable_room_returns_unresolved_and_cannot_be_published(scenario_client):
+    client, tokens, _ = scenario_client
+    scenario, simulation = _create_and_simulate(
+        client, tokens["management"], "Close A101 and only alternative",
+        "ROOM_UNAVAILABLE", "ROOM_UNAVAILABLE",
+        {"room_ids": ["life-room-101", "life-room-201"],
+         "weekdays": [0, 1, 2, 3, 4, 5],
+         "time_from": "08:00", "time_to": "18:00"},
+    )
+    result = simulation["options"][0]
+    assert simulation["affected_count"] == 1
+    assert result["status"] == "PARTIAL"
+    assert result["unresolved"][0]["entry_id"] == "life-entry"
+    unavailable_alternative = next(
+        room for room in result["unresolved"][0]["near_miss_rooms"]
+        if room["room"] == "V201"
+    )
+    assert any("unavailable" in reason for reason in unavailable_alternative["reasons"])
+    response = client.post(
+        f"/api/scenarios/{scenario['id']}/approve-publish",
+        headers=tokens["management"],
+        json={"run_id": result["run_id"]},
+    )
+    assert response.status_code == 400
+
+
+def test_zero_affected_classes_are_explained_and_cannot_be_published(scenario_client):
+    client, tokens, session_factory = scenario_client
+    with session_factory() as db:
+        db.query(TimetableEntry).filter_by(id="life-entry").one().base_room_id = None
+        db.commit()
+
+    scenario, simulation = _create_and_simulate(
+        client, tokens["management"], "Close empty A101",
+        "ROOM_UNAVAILABLE", "ROOM_UNAVAILABLE",
+        {"room_ids": ["life-room-101"], "weekdays": [0, 1, 2, 3, 4, 5],
+         "time_from": "08:00", "time_to": "18:00"},
+    )
+    result = simulation["options"][0]
+    assert simulation["affected_count"] == 0
+    assert "0 classes affected" in simulation["change_descriptions"][0]
+    response = client.post(
+        f"/api/scenarios/{scenario['id']}/approve-publish",
+        headers=tokens["management"],
+        json={"run_id": result["run_id"]},
+    )
+    assert response.status_code == 400
+    assert "No scheduled classes were affected" in response.json()["detail"]
 
 
 def test_stale_scenario_publish_returns_conflict(scenario_client):
@@ -337,3 +515,177 @@ def test_stale_scenario_publish_returns_conflict(scenario_client):
     )
     assert publish_stale.status_code == 409
     assert "Stale version" in publish_stale.json()["detail"]
+
+    refreshed_simulation = client.post(
+        f"/api/scenarios/{stale['id']}/simulate",
+        headers=manager,
+        json={"strategies": ["MIN_DISRUPTION"], "time_limit_sec": 2},
+    )
+    assert refreshed_simulation.status_code == 200, refreshed_simulation.text
+    publish_refreshed = client.post(
+        f"/api/scenarios/{stale['id']}/approve-publish",
+        headers=manager,
+        json={"run_id": refreshed_simulation.json()["options"][0]["run_id"]},
+    )
+    assert publish_refreshed.status_code == 200, publish_refreshed.text
+
+
+def test_changed_floor_level_after_simulation_requires_resimulation(scenario_client):
+    client, tokens, session_factory = scenario_client
+    scenario, simulation = _create_and_simulate(
+        client, tokens["management"], "Changed floor level", "ROOM_UNAVAILABLE",
+        "ROOM_UNAVAILABLE",
+        {"room_ids": ["life-room-101"], "time_from": "00:00", "time_to": "23:59"},
+    )
+    with session_factory() as db:
+        original_fingerprint = _timetable_state_fingerprint(db)
+        floor = db.query(Floor).filter_by(id="life-floor-2").one()
+        floor.level = 3
+        db.commit()
+        changed_fingerprint = _timetable_state_fingerprint(db)
+
+    assert changed_fingerprint != original_fingerprint
+    response = client.post(
+        f"/api/scenarios/{scenario['id']}/approve-publish",
+        headers=tokens["management"],
+        json={"run_id": simulation["options"][0]["run_id"]},
+    )
+    assert response.status_code == 409
+    assert "Run the simulation again" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("faculty_id", "life-other-faculty-record"),
+        ("section_id", "life-other-section"),
+        ("base_room_id", "life-room-201"),
+        ("start_slot", "P2"),
+    ],
+    ids=["faculty-assignment", "section-assignment", "room-assignment", "time-slot"],
+)
+def test_timetable_assignment_changes_after_simulation_require_resimulation(
+    scenario_client, field, value
+):
+    client, tokens, session_factory = scenario_client
+    scenario, simulation = _create_and_simulate(
+        client, tokens["management"], "Outdated timetable", "ROOM_UNAVAILABLE",
+        "ROOM_UNAVAILABLE",
+        {"room_ids": ["life-room-101"], "time_from": "00:00", "time_to": "23:59"},
+    )
+    with session_factory() as db:
+        entry = db.query(TimetableEntry).filter_by(id="life-entry").one()
+        setattr(entry, field, value)
+        db.commit()
+
+    response = client.post(
+        f"/api/scenarios/{scenario['id']}/approve-publish",
+        headers=tokens["management"],
+        json={"run_id": simulation["options"][0]["run_id"]},
+    )
+    assert response.status_code == 409
+    assert "Run the simulation again" in response.json()["detail"]
+
+
+def test_faculty_subject_publication_after_simulation_requires_resimulation(scenario_client):
+    client, tokens, session_factory = scenario_client
+    scenario, simulation = _create_and_simulate(
+        client, tokens["management"], "Outdated faculty assignment", "ROOM_UNAVAILABLE",
+        "ROOM_UNAVAILABLE",
+        {"room_ids": ["life-room-101"], "time_from": "00:00", "time_to": "23:59"},
+    )
+    with session_factory() as db:
+        request = FacultySubjectRequest(
+            id="life-fsr",
+            faculty_id="life-other-faculty-record",
+            status="PENDING",
+            created_at=get_now(),
+            updated_at=get_now(),
+        )
+        item = FacultySubjectRequestItem(
+            id="life-fsri",
+            request_id=request.id,
+            subject_id="life-subject",
+            preferred_section_ids=[],
+            availability={},
+            periods_per_week=1,
+            status="ASSIGNED",
+            created_at=request.created_at,
+            updated_at=request.updated_at,
+        )
+        db.add_all([
+            request,
+            item,
+            FacultyTeachingEligibility(
+                id="life-eligibility",
+                faculty_id="life-other-faculty-record",
+                academic_year=2,
+                section_id=None,
+            ),
+            FacultySubjectAssignment(
+                id="life-fsa",
+                request_item_id=item.id,
+                section_id="life-section",
+                room_id="life-room-201",
+                weekday=date.today().weekday(),
+                start_slot="P3",
+                duration_slots=1,
+                timetable_entry_id=None,
+                created_at=request.created_at,
+            ),
+        ])
+        db.commit()
+
+    workflow_publish = client.post(
+        "/api/management/faculty-subject-requests/life-fsr/items/life-fsri/publish",
+        headers=tokens["management"],
+    )
+    assert workflow_publish.status_code == 200, workflow_publish.text
+    assert workflow_publish.json()["items"][0]["status"] == "PUBLISHED"
+    with session_factory() as db:
+        assert db.query(TimetableEntry).filter_by(
+            faculty_id="life-other-faculty-record",
+            section_id="life-section",
+        ).count() == 1
+
+    response = client.post(
+        f"/api/scenarios/{scenario['id']}/approve-publish",
+        headers=tokens["management"],
+        json={"run_id": simulation["options"][0]["run_id"]},
+    )
+    assert response.status_code == 409
+    assert "Run the simulation again" in response.json()["detail"]
+
+    refreshed_simulation = client.post(
+        f"/api/scenarios/{scenario['id']}/simulate",
+        headers=tokens["management"],
+        json={"strategies": ["MIN_DISRUPTION"], "time_limit_sec": 2},
+    )
+    assert refreshed_simulation.status_code == 200, refreshed_simulation.text
+    publish_refreshed = client.post(
+        f"/api/scenarios/{scenario['id']}/approve-publish",
+        headers=tokens["management"],
+        json={"run_id": refreshed_simulation.json()["options"][0]["run_id"]},
+    )
+    assert publish_refreshed.status_code == 200, publish_refreshed.text
+
+
+def test_timetable_lock_serializes_concurrent_writers(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'timetable-lock.db'}",
+        connect_args={"timeout": 0.05},
+    )
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    first = session_factory()
+    second = session_factory()
+    try:
+        acquire_timetable_state_lock(first)
+        with pytest.raises(OperationalError, match="locked"):
+            acquire_timetable_state_lock(second)
+        first.commit()
+        acquire_timetable_state_lock(second)
+        second.commit()
+    finally:
+        first.close()
+        second.close()
+        engine.dispose()

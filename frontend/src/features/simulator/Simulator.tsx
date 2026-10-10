@@ -17,8 +17,8 @@ const STRATEGIES = [
 ];
 
 const SCENARIO_TYPES = [
-  { id: 'ROOM_UNAVAILABLE', label: 'Room Unavailable', icon: XCircle, desc: 'One or more rooms closed for a period' },
-  { id: 'FLOOR_UNAVAILABLE', label: 'Floor Unavailable', icon: Building2, desc: 'Entire floor closed (maintenance, event)' },
+  { id: 'ROOM_UNAVAILABLE', label: 'Room Unavailable', icon: XCircle, desc: 'One or more A Block rooms closed for a day/time window' },
+  { id: 'FLOOR_UNAVAILABLE', label: 'Floor Unavailable', icon: Building2, desc: 'An A Block floor closed (maintenance, event)' },
   { id: 'STRESS_TEST', label: 'Stress Test', icon: AlertTriangle, desc: 'Test system resilience under load' },
 ];
 
@@ -48,9 +48,13 @@ interface ResultRow {
   assigned_room_name?: string | null;
   class_strength?: number | null;
   room_capacity?: number | null;
+  original_room_capacity?: number | null;
+  room_capacity_provenance?: string | null;
+  original_room_capacity_provenance?: string | null;
   required_facilities: string[];
   status: 'REASSIGNED' | 'UNCHANGED' | 'UNRESOLVED';
   reason: string;
+  near_miss_rooms?: { room: string; reasons: string[] }[];
 }
 
 interface SolverOption {
@@ -74,10 +78,30 @@ interface FloorRecord {
   label?: string | null;
 }
 
+interface BlockRecord {
+  id: string;
+  code: string;
+  name: string;
+}
+
 interface RoomRecord {
   id: string;
   code: string;
   display_name: string;
+  aliases: string[];
+  resource_type: string;
+  capacity: number | null;
+  capacity_provenance: string | null;
+  facilities: string[];
+  floor_id: string;
+}
+
+interface OccupancyMetrics {
+  occupied_room_periods: number;
+  available_room_periods: number;
+  rooms_in_use: number;
+  rooms_with_unknown_capacity: number;
+  by_room: { room_id: string; room_code: string; occupied_periods: number; available_periods: number; capacity: number | null; capacity_provenance: string | null }[];
 }
 
 function floorLabel(floor: FloorRecord): string {
@@ -112,6 +136,8 @@ export const Simulator: React.FC = () => {
   const [floorId, setFloorId] = useState('');
   const [timeFrom, setTimeFrom] = useState('08:00');
   const [timeTo, setTimeTo] = useState('18:00');
+  const [closureWeekday, setClosureWeekday] = useState('ALL');
+  const [fullDayClosure, setFullDayClosure] = useState(false);
   const [strategies, setStrategies] = useState(['MIN_DISRUPTION', 'MIN_WALKING']);
   const [simulationId, setSimulationId] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimResult | null>(null);
@@ -119,9 +145,20 @@ export const Simulator: React.FC = () => {
   const [activeOptionIndex, setActiveOptionIndex] = useState(0);
   const [publishResult, setPublishResult] = useState<any>(null);
   const [error, setError] = useState('');
+  const { data: blocks = [] } = useQuery<BlockRecord[]>({
+    queryKey: ['campus-blocks', 'simulator'],
+    queryFn: async () => (await api.get('/blocks')).data,
+  });
+  const aBlock = blocks.find(block => block.code.trim().toUpperCase() === 'A');
   const { data: floors = [] } = useQuery<FloorRecord[]>({
-    queryKey: ['campus-floors', 'simulator'],
-    queryFn: async () => (await api.get('/floors')).data,
+    queryKey: ['campus-floors', 'simulator', aBlock?.id],
+    queryFn: async () => (await api.get(`/blocks/${encodeURIComponent(aBlock!.id)}/floors`)).data,
+    enabled: Boolean(aBlock?.id),
+  });
+  const { data: aBlockRooms = [] } = useQuery<RoomRecord[]>({
+    queryKey: ['campus-rooms', 'simulator', aBlock?.id],
+    queryFn: async () => (await api.get(`/blocks/${encodeURIComponent(aBlock!.id)}/rooms`)).data,
+    enabled: Boolean(aBlock?.id),
   });
   const { data: floorRooms = [] } = useQuery<RoomRecord[]>({
     queryKey: ['campus-floor-rooms', floorId],
@@ -172,34 +209,40 @@ export const Simulator: React.FC = () => {
     setActiveOptionIndex(0);
 
     try {
-      let payload: Record<string, unknown> = { time_from: timeFrom, time_to: timeTo };
+      const closureWindow: Record<string, unknown> = {
+        weekdays: closureWeekday === 'ALL'
+          ? [0, 1, 2, 3, 4, 5]
+          : [Number(closureWeekday)],
+      };
+      if (!fullDayClosure) {
+        closureWindow.time_from = timeFrom;
+        closureWindow.time_to = timeTo;
+      }
+      let payload: Record<string, unknown> = closureWindow;
       if (scenarioType === 'ROOM_UNAVAILABLE') {
         const roomCodes = roomsInput.split(',').map(s => s.trim()).filter(Boolean);
         if (roomCodes.length === 0) {
           setError('Please select at least one room.');
           return;
         }
-        const roomIds = await Promise.all(roomCodes.map(async roomCode => {
-          const response = await api.get<{ id: string; code: string; display_name: string; aliases: string[] }[]>('/rooms/search', {
-            params: { q: roomCode.replace(/^room[_\s-]*/i, '').replace(/[^a-z0-9]/gi, '') },
-          });
+        const roomIds = roomCodes.map(roomCode => {
           const target = normalizeRoom(roomCode);
-          const room = response.data.find(candidate =>
+          const room = aBlockRooms.find(candidate =>
             normalizeRoom(candidate.code) === target
             || normalizeRoom(candidate.display_name) === target
             || normalizeRoom(candidate.id) === target
             || candidate.aliases?.some(alias => normalizeRoom(alias) === target)
           );
-          if (!room) throw new Error(`No campus room matches “${roomCode}”.`);
+          if (!room) throw new Error(`No A Block room matches “${roomCode}”.`);
           return room.id;
-        }));
-        payload = { ...payload, room_ids: roomIds };
+        });
+        payload = { ...closureWindow, room_ids: roomIds };
       } else if (scenarioType === 'FLOOR_UNAVAILABLE') {
         if (!floorId) {
           setError('Please select a floor.');
           return;
         }
-        payload = { ...payload, floor_id: floorId };
+        payload = { ...closureWindow, floor_id: floorId };
       } else if (scenarioType === 'STRESS_TEST') {
         payload = { k: 5 };
       }
@@ -258,6 +301,10 @@ export const Simulator: React.FC = () => {
     : scenarioType === 'ROOM_UNAVAILABLE'
       ? rooms
       : [];
+  const previewWindow = fullDayClosure ? 'all teaching periods' : `${timeFrom}–${timeTo}`;
+  const previewDay = closureWeekday === 'ALL'
+    ? 'all weekdays'
+    : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][Number(closureWeekday)];
 
   const assignmentCount = activeOption?.assignments
     ? Object.keys(activeOption.assignments).length
@@ -267,6 +314,12 @@ export const Simulator: React.FC = () => {
   const resultRows = activeOption?.result_rows || [];
   const reassignedCount = resultRows.filter(row => row.status === 'REASSIGNED').length;
   const unchangedCount = resultRows.filter(row => row.status === 'UNCHANGED').length;
+  const completeAllocation = activeOption?.status === 'FEASIBLE'
+    && (simulationResult?.affected_count ?? 0) > 0
+    && unresolvedCount === 0
+    && resultRows.length === simulationResult?.affected_count;
+  const occupancyBefore = activeOption?.metrics?.room_occupancy_before as OccupancyMetrics | undefined;
+  const occupancyAfter = activeOption?.metrics?.room_occupancy_after as OccupancyMetrics | undefined;
 
   // Get first explanation value
   const explanationText = activeOption?.explanations
@@ -364,9 +417,20 @@ export const Simulator: React.FC = () => {
                   className="input-field"
                   value={roomsInput}
                   onChange={e => setRoomsInput(e.target.value)}
-                  placeholder="A101, A102"
+                  placeholder="A101, SH01"
+                  list="a-block-room-codes"
                 />
-                <p className="text-xs text-slate-600 mt-1">Enter room codes; separate multiple rooms with commas.</p>
+                <datalist id="a-block-room-codes">
+                  {aBlockRooms.map(room => (
+                    <option key={room.id} value={room.code}>
+                      {room.display_name} · {room.resource_type} · capacity {room.capacity ?? 'not recorded'} ({room.capacity_provenance || 'provenance unavailable'})
+                    </option>
+                  ))}
+                </datalist>
+                <p className="text-xs text-slate-600 mt-1">
+                  Choose existing A Block room codes; separate multiple rooms with commas.
+                  {aBlock ? '' : ' A Block inventory could not be loaded.'}
+                </p>
               </div>
             )}
             {scenarioType === 'FLOOR_UNAVAILABLE' && (
@@ -378,7 +442,7 @@ export const Simulator: React.FC = () => {
                   value={floorId}
                   onChange={e => setFloorId(e.target.value)}
                 >
-                  <option value="">Choose a campus floor</option>
+                  <option value="">Choose an A Block floor</option>
                   {floors.map(floor => (
                     <option key={floor.id} value={floor.id}>{floorLabel(floor)}</option>
                   ))}
@@ -389,16 +453,31 @@ export const Simulator: React.FC = () => {
               <p className="text-sm text-slate-400">Stress condition: close the five busiest scheduled rooms.</p>
             )}
 
-            {scenarioType !== 'STRESS_TEST' && <div className="grid grid-cols-2 gap-3">
+            {scenarioType !== 'STRESS_TEST' && <>
               <div>
-                <label className="label">From</label>
-                <input type="time" className="input-field" value={timeFrom} onChange={e => setTimeFrom(e.target.value)} />
+                <label className="label" htmlFor="scenario-weekday">Affected weekday</label>
+                <select id="scenario-weekday" className="input-field" value={closureWeekday} onChange={e => setClosureWeekday(e.target.value)}>
+                  <option value="ALL">All weekdays</option>
+                  {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, index) => (
+                    <option key={day} value={String(index)}>{day}</option>
+                  ))}
+                </select>
               </div>
-              <div>
-                <label className="label">To</label>
-                <input type="time" className="input-field" value={timeTo} onChange={e => setTimeTo(e.target.value)} />
-              </div>
-            </div>}
+              <label className="flex items-center gap-2 text-sm text-slate-300">
+                <input type="checkbox" checked={fullDayClosure} onChange={event => setFullDayClosure(event.target.checked)} className="h-4 w-4 accent-indigo-500" />
+                Close for the full day
+              </label>
+              {!fullDayClosure && <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">From</label>
+                  <input type="time" className="input-field" value={timeFrom} onChange={e => setTimeFrom(e.target.value)} />
+                </div>
+                <div>
+                  <label className="label">To</label>
+                  <input type="time" className="input-field" value={timeTo} onChange={e => setTimeTo(e.target.value)} />
+                </div>
+              </div>}
+            </>}
 
             <div>
               <label className="label">Optimization Strategies</label>
@@ -444,7 +523,7 @@ export const Simulator: React.FC = () => {
                 </div>
                 <div className="bg-slate-800/60 rounded-xl p-4 text-center">
                   <p className="text-xs text-slate-500 mb-1">Time Window</p>
-                  <p className="text-sm font-semibold text-cyan-300">{timeFrom}–{timeTo}</p>
+                  <p className="text-sm font-semibold text-cyan-300">{previewDay} · {previewWindow}</p>
                 </div>
               </div>
 
@@ -453,7 +532,7 @@ export const Simulator: React.FC = () => {
                   <div key={r} className="flex items-center gap-2 p-2 bg-red-900/20 border border-red-800/40 rounded-lg text-sm text-red-300">
                     <XCircle size={14} />
                     <span className="font-mono">{r}</span>
-                    <span className="text-red-500">→ Unavailable {timeFrom}–{timeTo}</span>
+                    <span className="text-red-500">→ Unavailable {previewDay} · {previewWindow}</span>
                   </div>
                 ))}
               </div>
@@ -510,9 +589,24 @@ export const Simulator: React.FC = () => {
       {/* STEP 3: Results */}
       {step === 3 && simulationResult && (
         <div className="space-y-6">
+          {simulationResult.options.length === 0 && (
+            <div role="alert" className="rounded-lg border border-red-700/50 bg-red-900/20 p-4 text-sm text-red-200">
+              The backend did not return a simulation option. No allocation can be reviewed or published.
+            </div>
+          )}
           {activeOption?.metrics?.stress_condition && (
             <div className="rounded-lg border border-amber-700/40 bg-amber-900/20 p-4 text-sm text-amber-200">
               Stress condition: {activeOption.metrics.stress_condition}
+            </div>
+          )}
+          {activeOption && activeOption.status !== 'FEASIBLE' && (
+            <div role="status" className="rounded-lg border border-amber-700/40 bg-amber-900/20 p-4 text-sm text-amber-200">
+              This simulation is {activeOption.status.toLowerCase()}; the allocation is incomplete and cannot be published.
+            </div>
+          )}
+          {simulationResult.affected_count === 0 && (
+            <div role="status" className="rounded-lg border border-amber-700/40 bg-amber-900/20 p-4 text-sm text-amber-200">
+              No scheduled timetable entries overlap this closure. No classes were reassigned or changed; check the current room assignments or choose a closure that affects scheduled classes.
             </div>
           )}
           {/* Summary stats */}
@@ -603,12 +697,22 @@ export const Simulator: React.FC = () => {
                           {row.day || 'Day unavailable'} · {row.start_time || 'Time unavailable'}–{row.end_time || 'Time unavailable'}
                         </p>
                         <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3">
-                          <div><dt className="text-slate-500">Original room</dt><dd className="text-slate-200">{row.original_room_code || row.original_room_name || 'Unavailable'}</dd></div>
-                          <div><dt className="text-slate-500">Recommended room</dt><dd className="text-slate-200">{row.assigned_room_code || row.assigned_room_name || 'No feasible room'}</dd></div>
-                          <div><dt className="text-slate-500">Strength / capacity</dt><dd className="text-slate-200">{row.class_strength ?? 'Unavailable'} / {row.room_capacity ?? 'Unavailable'}</dd></div>
+                          <div><dt className="text-slate-500">Original room</dt><dd className="text-slate-200">{row.original_room_code || row.original_room_name || 'Unavailable'} · capacity {row.original_room_capacity ?? 'not recorded'} ({row.original_room_capacity_provenance || 'provenance unavailable'})</dd></div>
+                          <div><dt className="text-slate-500">Proposed room</dt><dd className="text-slate-200">{row.assigned_room_code || row.assigned_room_name || 'No feasible room'} · capacity {row.room_capacity ?? 'not recorded'} ({row.room_capacity_provenance || 'provenance unavailable'})</dd></div>
+                          <div><dt className="text-slate-500">Section strength</dt><dd className="text-slate-200">{row.class_strength ?? 'Not recorded'}</dd></div>
                           <div className="sm:col-span-3"><dt className="text-slate-500">Required facilities</dt><dd className="text-slate-200">{row.required_facilities?.length ? row.required_facilities.join(', ') : 'None specified'}</dd></div>
                         </dl>
                         <p className="mt-3 text-sm text-slate-300"><span className="font-medium text-slate-400">Reason: </span>{row.reason}</p>
+                        {row.near_miss_rooms && row.near_miss_rooms.length > 0 && (
+                          <details className="mt-2 text-xs text-amber-200">
+                            <summary className="cursor-pointer">Candidate room rejection details</summary>
+                            <ul className="mt-2 space-y-1 pl-4">
+                              {row.near_miss_rooms.map(candidate => (
+                                <li key={candidate.room}><span className="font-medium">{candidate.room}:</span> {candidate.reasons.join('; ') || 'not eligible'}</li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
                       </article>
                     ))}
                   </div>
@@ -640,7 +744,7 @@ export const Simulator: React.FC = () => {
                   </div>
                   <div className="space-y-2">
                     {activeOption.metrics && typeof activeOption.metrics === 'object' && Object.keys(activeOption.metrics).length > 0 ? (
-                      Object.entries(activeOption.metrics).map(([key, value]) => (
+                      Object.entries(activeOption.metrics).filter(([, value]) => value === null || ['string', 'number', 'boolean'].includes(typeof value)).map(([key, value]) => (
                         <div key={key} className="flex justify-between items-center py-1.5 border-b border-slate-800 last:border-0">
                           <span className="text-xs text-slate-400 capitalize">{key.replace(/_/g, ' ')}</span>
                           <span className="text-xs font-semibold text-white">{String(value)}</span>
@@ -667,14 +771,43 @@ export const Simulator: React.FC = () => {
                   </div>
                 </div>
 
+                {(occupancyBefore || occupancyAfter) && (
+                  <div className="card p-5 space-y-4">
+                    <h3 className="section-header"><Building2 size={16} className="text-cyan-400" />Room occupancy</h3>
+                    {[['Before', occupancyBefore], ['After proposal', occupancyAfter]].map(([label, metric]) => {
+                      const value = metric as OccupancyMetrics | undefined;
+                      if (!value) return null;
+                      return (
+                        <details key={label as string} className="rounded-lg border border-slate-800 p-3">
+                          <summary className="cursor-pointer text-sm font-medium text-slate-200">
+                            {label as string}: {value.occupied_room_periods} occupied room-periods / {value.available_room_periods} available
+                          </summary>
+                          <p className="mt-2 text-xs text-slate-400">{value.rooms_in_use} rooms in use · {value.rooms_with_unknown_capacity} eligible rooms with capacity not recorded</p>
+                          <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs text-slate-300">
+                            {value.by_room.filter(room => room.occupied_periods > 0).map(room => (
+                              <li key={room.room_id} className="flex justify-between gap-2">
+                                <span>{room.room_code} · {room.occupied_periods} occupied periods</span>
+                                <span>Capacity {room.capacity ?? 'not recorded'} · {room.capacity_provenance || 'provenance unavailable'}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      );
+                    })}
+                  </div>
+                )}
+
                 <div className="card p-5 space-y-3">
                   <div className="section-header mb-1">
                     <Save size={16} className="text-emerald-400" />
                     Decision
                   </div>
                   <p className="text-xs text-slate-400">
-                    Review the selected alternative first. Publishing creates session overrides and notifies affected students and faculty.
+                    Review the selected alternative first. Publishing creates date-specific overrides for the next occurrence of each affected class, not recurring timetable changes, and notifies affected students and faculty.
                   </p>
+                  {!completeAllocation && (
+                    <p className="text-xs text-amber-300">Publishing is disabled until every affected class has a valid assignment.</p>
+                  )}
                   <button
                     onClick={handleReview}
                     disabled={isReviewed || reviewMutation.isPending}
@@ -684,7 +817,7 @@ export const Simulator: React.FC = () => {
                   </button>
                   <button
                     onClick={handlePublish}
-                    disabled={!isReviewed || publishMutation.isPending}
+                    disabled={!isReviewed || !completeAllocation || publishMutation.isPending}
                     className="w-full btn-success flex items-center justify-center gap-2 disabled:opacity-50"
                   >
                     {publishMutation.isPending ? (

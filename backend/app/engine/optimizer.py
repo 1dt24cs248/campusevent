@@ -13,13 +13,16 @@ from ortools.sat.python import cp_model
 from app.engine.slots import SLOT_INDEX
 
 
+VERIFIED_CAPACITY_PROVENANCE = {"PROVIDED", "REAL"}
+
+
 @dataclass
 class EntryInfo:
     """Flattened timetable entry for the optimizer."""
     id: str
     section_id: str
     section_name: str
-    strength: int
+    strength: Optional[int]
     weekday: int
     start_slot: str
     duration_slots: int
@@ -30,6 +33,7 @@ class EntryInfo:
     base_room_id: Optional[str] = None
     home_room_id: Optional[str] = None
     faculty_id: Optional[str] = None
+    subject_id: Optional[str] = None
 
 
 @dataclass
@@ -38,12 +42,16 @@ class RoomInfo:
     id: str
     code: str
     resource_type: str
-    capacity: int
+    capacity: Optional[int]
     floor_level: int
     floor_id: Optional[str] = None
     lab_kind: Optional[str] = None
     facilities: List[str] = field(default_factory=list)
     is_spare: bool = False
+    block_id: Optional[str] = None
+    status: str = "ACTIVE"
+    allocatable_for_classes: bool = True
+    capacity_provenance: Optional[str] = None
 
 
 @dataclass
@@ -78,60 +86,90 @@ class AllocationOptimizer:
         rooms: List[RoomInfo],
         unavailable_rooms: set = None,
         occupied_slots: Dict[Tuple[int, str], set] = None,
+        unavailable_room_slots: Dict[Tuple[int, str], set] = None,
+        hard_conflicts: Dict[str, List[str]] = None,
         time_limit_sec: int = 8,
     ):
         self.entries = entries
         self.rooms = rooms
         self.unavailable = unavailable_rooms or set()
         self.occupied = occupied_slots or {}  # {(weekday, slot): set of room_ids}
+        self.unavailable_room_slots = unavailable_room_slots or {}
+        self.hard_conflicts = hard_conflicts or {}
         self.time_limit = time_limit_sec
         self.room_by_id = {r.id: r for r in rooms}
 
     def _get_candidates(self, entry: EntryInfo) -> List[RoomInfo]:
         """Get valid candidate rooms for an entry (hard constraint filtering)."""
         candidates = []
+        original_room = self.room_by_id.get(entry.base_room_id)
+        home_room = self.room_by_id.get(entry.home_room_id)
+        required_block_id = (
+            original_room.block_id if original_room else
+            home_room.block_id if home_room else None
+        )
         for room in self.rooms:
             if room.id in self.unavailable:
                 continue
-            # Room type must match
-            if entry.required_room_type == "CLASSROOM" and room.resource_type not in ("CLASSROOM", "SEMINAR_HALL"):
+            if not room.allocatable_for_classes or (room.status or "").upper() != "ACTIVE":
                 continue
-            if entry.required_room_type == "LAB" and room.resource_type != "LAB":
+            if required_block_id and room.block_id != required_block_id:
                 continue
-            # Capacity
-            if room.capacity < entry.strength:
+            if not self._room_type_matches(entry, room):
                 continue
-            # Lab kind
-            if entry.kind == "LAB" and entry.required_lab_kind:
+            if entry.strength is None or room.capacity is None or room.capacity < entry.strength:
+                continue
+            if (room.capacity_provenance or "").strip().upper() not in VERIFIED_CAPACITY_PROVENANCE:
+                continue
+            if (entry.kind == "LAB" or entry.required_room_type == "LAB") and entry.required_lab_kind:
                 if room.lab_kind != entry.required_lab_kind:
                     continue
-            # Required facilities (HARD constraint)
             if entry.required_facilities:
                 room_facilities = set(room.facilities or [])
                 required = set(entry.required_facilities)
                 if not required.issubset(room_facilities):
                     continue
-            # Check slot occupancy for ALL slots this entry uses
-            occupied_conflict = False
             slots_needed = self._entry_slots(entry)
-            for ws in slots_needed:
-                if room.id in self.occupied.get(ws, set()):
-                    occupied_conflict = True
-                    break
-            if occupied_conflict:
+            if not slots_needed:
+                continue
+            if any(
+                room.id in self.occupied.get(slot, set())
+                or room.id in self.unavailable_room_slots.get(slot, set())
+                for slot in slots_needed
+            ):
                 continue
             candidates.append(room)
         return candidates
 
+    @staticmethod
+    def _room_type_matches(entry: EntryInfo, room: RoomInfo) -> bool:
+        required = (entry.required_room_type or "").upper()
+        if required == "CLASSROOM":
+            return room.resource_type in {"CLASSROOM", "SEMINAR_HALL"}
+        if required == "SEMINAR_HALL":
+            return room.resource_type == "SEMINAR_HALL"
+        if required == "LAB":
+            return room.resource_type == "LAB"
+        return bool(required) and room.resource_type == required
+
     def _entry_slots(self, entry: EntryInfo) -> List[Tuple[int, str]]:
         """Return all (weekday, slot) tuples this entry occupies."""
-        from app.engine.slots import PERIOD_SLOTS
-        start_idx = SLOT_INDEX.get(entry.start_slot, 0)
+        from app.engine.slots import PERIOD_SLOTS, get_slots_for_day
+        start_idx = SLOT_INDEX.get(entry.start_slot)
+        if (
+            start_idx is None
+            or entry.weekday not in range(6)
+            or not isinstance(entry.duration_slots, int)
+            or entry.duration_slots < 1
+        ):
+            return []
         result = []
+        day_slots = set(get_slots_for_day(entry.weekday))
         for d in range(entry.duration_slots):
             idx = start_idx + d
-            if idx < len(PERIOD_SLOTS):
-                result.append((entry.weekday, PERIOD_SLOTS[idx]))
+            if idx >= len(PERIOD_SLOTS) or PERIOD_SLOTS[idx] not in day_slots:
+                return []
+            result.append((entry.weekday, PERIOD_SLOTS[idx]))
         return result
 
     def solve(self, strategy: str = "MIN_DISRUPTION") -> SolverResult:
@@ -162,6 +200,8 @@ class AllocationOptimizer:
         for entry in self.entries:
             room_vars = list(x[entry.id].values())
             model.Add(sum(room_vars) + unassigned[entry.id] == 1)
+            if self.hard_conflicts.get(entry.id):
+                model.Add(unassigned[entry.id] == 1)
 
         # Constraint: no double-booking (at most 1 entry per room per slot)
         slot_entries: Dict[Tuple[int, str], List[Tuple[str, str]]] = {}
@@ -180,41 +220,47 @@ class AllocationOptimizer:
                 if len(vars_in_slot) > 1:
                     model.Add(sum(vars_in_slot) <= 1)
 
-        # Objective function
+        # Objective function. Preserve feasibility first, then minimize
+        # excess capacity, walking distance, and allocation preferences.
         objective_terms = []
-
-        # Penalty for unassigned entries (highest priority)
-        UNASSIGNED_PENALTY = 10000
+        max_capacity = max((room.capacity or 0 for room in self.rooms), default=0)
+        max_floor_distance = max(
+            (
+                abs(room.floor_level - original.floor_level)
+                for room in self.rooms
+                for original in [self.room_by_id.get(entry.base_room_id)]
+                if original is not None
+            ),
+            default=0,
+        )
+        lower_cost_bound = max(
+            len(self.entries) * (max_floor_distance * 3 * 100 + len(self.rooms) + 1),
+            1,
+        )
+        capacity_weight = lower_cost_bound + 1
+        unassigned_penalty = (
+            len(self.entries) * max_capacity * capacity_weight
+            + lower_cost_bound + 1
+        )
         for entry in self.entries:
-            objective_terms.append(UNASSIGNED_PENALTY * unassigned[entry.id])
+            objective_terms.append(unassigned_penalty * unassigned[entry.id])
 
-        # Soft penalties per assignment
         for entry in self.entries:
             for room_id, var in x[entry.id].items():
                 room = self.room_by_id[room_id]
-                penalty = 0
-
-                # Room change penalty
-                if entry.base_room_id and room_id != entry.base_room_id:
-                    penalty += weights.get("room_change", 10)
-
-                # Walking effort (floor distance)
-                if entry.base_room_id and entry.base_room_id in self.room_by_id:
-                    old_floor = self.room_by_id[entry.base_room_id].floor_level
-                    new_floor = room.floor_level
-                    penalty += abs(old_floor - new_floor) * 3 * weights.get("walking", 5)
-
-                # Home room bonus (negative penalty)
-                if entry.home_room_id and room_id == entry.home_room_id:
-                    penalty -= weights.get("stability", 10)
-
-                # Wasted capacity
+                assert room.capacity is not None and entry.strength is not None
                 waste = room.capacity - entry.strength
-                if waste > 0:
-                    penalty += (waste // 10) * weights.get("waste", 1)
-
-                if penalty != 0:
-                    objective_terms.append(penalty * var)
+                original = self.room_by_id.get(entry.base_room_id)
+                walking = abs(room.floor_level - original.floor_level) * 3 if original else 0
+                preference = (
+                    weights.get("room_change", 10)
+                    if entry.base_room_id and room_id != entry.base_room_id else 0
+                )
+                if entry.home_room_id and room_id == entry.home_room_id:
+                    preference = max(0, preference - weights.get("stability", 0))
+                cost = waste * capacity_weight + walking * 100 + preference
+                if cost:
+                    objective_terms.append(cost * var)
 
         model.Minimize(sum(objective_terms))
 
@@ -222,6 +268,7 @@ class AllocationOptimizer:
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = self.time_limit
         solver.parameters.random_seed = 42
+        solver.parameters.num_search_workers = 1
         cp_status = solver.Solve(model)
 
         solve_ms = int((time_mod.time() - start_time) * 1000)
@@ -236,7 +283,6 @@ class AllocationOptimizer:
 
             for entry in self.entries:
                 if solver.Value(unassigned[entry.id]):
-                    # Collect rejection reasons
                     reasons = self._get_rejection_reasons(entry, entry_candidates[entry.id])
                     unresolved_list.append({
                         "entry_id": entry.id,
@@ -244,7 +290,15 @@ class AllocationOptimizer:
                         "slot": f"{entry.weekday}-{entry.start_slot}",
                         "kind": entry.kind,
                         "strength": entry.strength,
-                        "reason": "No compatible room available" if not entry_candidates[entry.id] else "Solver could not find conflict-free assignment",
+                        "reason": (
+                            "; ".join(self.hard_conflicts[entry.id])
+                            if self.hard_conflicts.get(entry.id)
+                            else "Invalid weekday, time slot, or class duration"
+                            if not self._entry_slots(entry)
+                            else "No compatible room available"
+                            if not entry_candidates[entry.id]
+                            else "Solver could not find a conflict-free assignment"
+                        ),
                         "near_miss_rooms": reasons[:3],
                     })
                 else:
@@ -258,7 +312,7 @@ class AllocationOptimizer:
                                 if entry.base_room_id in self.room_by_id:
                                     old_floor = self.room_by_id[entry.base_room_id].floor_level
                                     total_walking += abs(old_floor - room.floor_level) * 3
-                            total_waste += room.capacity - entry.strength
+                            total_waste += (room.capacity or 0) - (entry.strength or 0)
                             explanations[entry.id] = self._explain(entry, room)
                             break
 
@@ -280,8 +334,11 @@ class AllocationOptimizer:
                 solve_ms=solve_ms,
             )
         else:
+            solver_status = (
+                "INFEASIBLE" if cp_status == cp_model.INFEASIBLE else "UNKNOWN"
+            )
             return SolverResult(
-                status="INFEASIBLE",
+                status=solver_status,
                 strategy=strategy,
                 unresolved=[{
                     "entry_id": e.id,
@@ -289,7 +346,11 @@ class AllocationOptimizer:
                     "slot": f"{e.weekday}-{e.start_slot}",
                     "kind": e.kind,
                     "strength": e.strength,
-                    "reason": "No feasible allocation exists",
+                    "reason": (
+                        "No feasible allocation exists"
+                        if solver_status == "INFEASIBLE"
+                        else "The optimizer did not find a solution before its time limit."
+                    ),
                     "near_miss_rooms": self._get_rejection_reasons(e, entry_candidates[e.id])[:3],
                 } for e in self.entries],
                 metrics={"total_entries": len(self.entries), "assigned": 0, "unresolved": len(self.entries)},
@@ -300,6 +361,8 @@ class AllocationOptimizer:
         """Generate fact-based explanation for an assignment."""
         parts = [f"Room {room.code} selected:"]
         parts.append(f"capacity {room.capacity} >= strength {entry.strength}")
+        if room.capacity_provenance:
+            parts.append(f"capacity provenance {room.capacity_provenance.lower()}")
         if entry.home_room_id == room.id:
             parts.append("matches home room preference")
         if entry.base_room_id == room.id:
@@ -311,34 +374,79 @@ class AllocationOptimizer:
                 parts.append("same floor as original")
             else:
                 parts.append(f"{floor_diff} floor(s) from original room {old.code}")
-        waste = room.capacity - entry.strength
+        waste = (room.capacity or 0) - (entry.strength or 0)
         parts.append(f"waste: {waste} seats")
         return "; ".join(parts)
 
     def _get_rejection_reasons(self, entry: EntryInfo, candidates: List[RoomInfo]) -> List[Dict]:
         """Get rejection reasons for rooms that didn't make it."""
-        reasons = []
-        for room in self.rooms[:10]:
-            if room in candidates:
+        ranked_reasons = []
+        candidate_ids = {room.id for room in candidates}
+        original = self.room_by_id.get(entry.base_room_id)
+        home = self.room_by_id.get(entry.home_room_id)
+        required_block_id = original.block_id if original else home.block_id if home else None
+        reference_room = original or home
+        for room in self.rooms:
+            if room.id in candidate_ids:
                 continue
-            r = {"room": room.code, "reasons": []}
-            if entry.required_room_type == "CLASSROOM" and room.resource_type not in ("CLASSROOM", "SEMINAR_HALL"):
-                r["reasons"].append(f"type {room.resource_type} != required CLASSROOM")
-            if entry.required_room_type == "LAB" and room.resource_type != "LAB":
-                r["reasons"].append(f"type {room.resource_type} != required LAB")
-            if room.capacity < entry.strength:
+            r = {
+                "room": room.code,
+                "capacity": room.capacity,
+                "capacity_provenance": room.capacity_provenance,
+                "reasons": [],
+            }
+            if not room.allocatable_for_classes:
+                r["reasons"].append("room is not designated for classes")
+            if (room.status or "").upper() != "ACTIVE":
+                r["reasons"].append(f"room status is {room.status}")
+            if required_block_id and room.block_id != required_block_id:
+                r["reasons"].append("room is outside the affected block")
+            if not self._room_type_matches(entry, room):
+                r["reasons"].append(
+                    f"room type {room.resource_type} is incompatible with required {entry.required_room_type}"
+                )
+            if room.capacity is None:
+                r["reasons"].append("room capacity is not recorded")
+            elif entry.strength is None:
+                r["reasons"].append("section strength is not recorded")
+            elif room.capacity < entry.strength:
                 r["reasons"].append(f"capacity {room.capacity} < strength {entry.strength}")
+            provenance = (room.capacity_provenance or "").strip().upper()
+            if provenance not in VERIFIED_CAPACITY_PROVENANCE:
+                r["reasons"].append(
+                    "room capacity provenance is not recorded"
+                    if not provenance
+                    else f"room capacity provenance {provenance} is not verified"
+                )
             if room.id in self.unavailable:
                 r["reasons"].append("room unavailable")
-            if entry.kind == "LAB" and entry.required_lab_kind and room.lab_kind != entry.required_lab_kind:
+            if (
+                (entry.kind == "LAB" or entry.required_room_type == "LAB")
+                and entry.required_lab_kind
+                and room.lab_kind != entry.required_lab_kind
+            ):
                 r["reasons"].append(f"lab kind {room.lab_kind} != {entry.required_lab_kind}")
+            missing_facilities = set(entry.required_facilities) - set(room.facilities or [])
+            if missing_facilities:
+                r["reasons"].append(
+                    f"missing facilities: {', '.join(sorted(missing_facilities))}"
+                )
             for ws in self._entry_slots(entry):
-                if room.id in self.occupied.get(ws, set()):
+                if room.id in self.unavailable_room_slots.get(ws, set()):
+                    r["reasons"].append(f"unavailable during {ws[0]}-{ws[1]}")
+                elif room.id in self.occupied.get(ws, set()):
                     r["reasons"].append(f"occupied during {ws[0]}-{ws[1]}")
-                    break
-            if r["reasons"]:
-                reasons.append(r)
-        return reasons
+            distance = (
+                abs(room.floor_level - reference_room.floor_level)
+                if reference_room else 0
+            )
+            ranked_reasons.append(
+                ((len(r["reasons"]), distance, room.code, room.id), r)
+            )
+        return [
+            reason
+            for _, reason in sorted(ranked_reasons, key=lambda item: item[0])[:20]
+        ]
 
     def solve_multiple(self, strategies: List[str] = None, max_options: int = 3) -> List[SolverResult]:
         """Run multiple strategies and return up to max_options distinct results."""
@@ -372,8 +480,9 @@ class AllocationOptimizer:
         if results:
             results.sort(key=lambda r: (
                 r.metrics.get("unresolved", 999),
-                r.metrics.get("room_changes", 999),
+                r.metrics.get("wasted_capacity", 999),
                 r.metrics.get("walking_effort", 999),
+                r.metrics.get("room_changes", 999),
             ))
             for i, r in enumerate(results):
                 label = f"Option {i + 1}"
