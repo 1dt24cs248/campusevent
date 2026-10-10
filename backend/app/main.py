@@ -12,6 +12,7 @@ from app.routers import actions as actions_router
 from app.routers import management as management_router
 from app.routers import student as student_router
 from app.routers import faculty as faculty_router
+from app.routers import faculty_subject_requests as faculty_subject_requests_router
 from app.routers import events as events_router
 from app.routers import food as food_router
 from app.db import Base, engine
@@ -64,6 +65,7 @@ app.include_router(actions_router.router, prefix="/api", tags=["campus actions"]
 app.include_router(management_router.router, prefix="/api", tags=["management"])
 app.include_router(student_router.router, prefix="/api", tags=["student"])
 app.include_router(faculty_router.router, prefix="/api", tags=["faculty"])
+app.include_router(faculty_subject_requests_router.router, prefix="/api", tags=["faculty subject requests"])
 app.include_router(events_router.router, prefix="/api", tags=["events"])
 app.include_router(food_router.router, prefix="/api", tags=["food"])
 

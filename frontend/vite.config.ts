@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const apiTarget = process.env.CAMPUS_API_PROXY || 'http://localhost:8766'
+const apiTarget = process.env.CAMPUS_API_PROXY || 'http://127.0.0.1:8000'
 
 export default defineConfig({
   plugins: [react()],
@@ -10,7 +10,7 @@ export default defineConfig({
       '/api': {
         target: apiTarget,
         changeOrigin: true,
-      }
-    }
-  }
+      },
+    },
+  },
 })

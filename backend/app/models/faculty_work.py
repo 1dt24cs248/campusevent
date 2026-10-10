@@ -1,6 +1,55 @@
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, String, Time, UniqueConstraint
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, JSON, String, Text, Time, UniqueConstraint
 
 from app.db import Base
+
+
+class FacultySubjectRequest(Base):
+    __tablename__ = "faculty_subject_requests"
+
+    id = Column(String, primary_key=True)
+    faculty_id = Column(String, ForeignKey("faculties.id"), nullable=False, index=True)
+    status = Column(String, nullable=False, default="PENDING", index=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+
+class FacultySubjectRequestItem(Base):
+    __tablename__ = "faculty_subject_request_items"
+
+    id = Column(String, primary_key=True)
+    request_id = Column(String, ForeignKey("faculty_subject_requests.id"), nullable=False, index=True)
+    subject_id = Column(String, ForeignKey("subjects.id"), nullable=False)
+    preferred_section_ids = Column(JSON, nullable=False, default=list)
+    availability = Column(JSON, nullable=False, default=dict)
+    periods_per_week = Column(Integer, nullable=False)
+    status = Column(String, nullable=False, default="PENDING", index=True)
+    decision_reason = Column(Text, nullable=True)
+    decided_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+
+class FacultySubjectAssignment(Base):
+    __tablename__ = "faculty_subject_assignments"
+    __table_args__ = (
+        UniqueConstraint(
+            "request_item_id", "weekday", "start_slot",
+            name="uq_faculty_subject_assignment_item_slot",
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    request_item_id = Column(
+        String, ForeignKey("faculty_subject_request_items.id"), nullable=False, index=True
+    )
+    section_id = Column(String, ForeignKey("sections.id"), nullable=False)
+    room_id = Column(String, ForeignKey("rooms.id"), nullable=False)
+    weekday = Column(Integer, nullable=False)
+    start_slot = Column(String, nullable=False)
+    duration_slots = Column(Integer, nullable=False, default=1)
+    timetable_entry_id = Column(String, ForeignKey("timetable_entries.id"), nullable=True, unique=True)
+    created_at = Column(DateTime, nullable=False)
 
 
 class ClassroomRequest(Base):

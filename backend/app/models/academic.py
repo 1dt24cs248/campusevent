@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Boolean, ForeignKey, JSON, Index, Text
+from sqlalchemy import CheckConstraint, Column, String, Integer, Boolean, ForeignKey, JSON, Index, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.db import Base
 
@@ -47,6 +47,29 @@ class Faculty(Base):
     employee_id = Column(String, nullable=True)
     designation = Column(String, nullable=True)
     is_synthetic = Column(Boolean, default=False)
+
+class FacultyTeachingEligibility(Base):
+    __tablename__ = 'faculty_teaching_eligibilities'
+    __table_args__ = (
+        UniqueConstraint(
+            'faculty_id', 'academic_year',
+            name='uq_faculty_teaching_eligibility_year',
+        ),
+        UniqueConstraint(
+            'faculty_id', 'section_id',
+            name='uq_faculty_teaching_eligibility_section',
+        ),
+        CheckConstraint(
+            '(academic_year IS NOT NULL AND section_id IS NULL) OR '
+            '(academic_year IS NULL AND section_id IS NOT NULL)',
+            name='ck_faculty_teaching_eligibility_target',
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    faculty_id = Column(String, ForeignKey('faculties.id'), nullable=False, index=True)
+    academic_year = Column(Integer, nullable=True)
+    section_id = Column(String, ForeignKey('sections.id'), nullable=True)
 
 class Student(Base):
     __tablename__ = 'students'

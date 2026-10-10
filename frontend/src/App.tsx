@@ -30,6 +30,8 @@ import { FacultyProfile } from './features/faculty/FacultyProfile';
 import { FacultyAttendance } from './features/faculty/FacultyAttendance';
 import { FacultyAcademicManagement } from './features/faculty/FacultyAcademicManagement';
 import { FacultyClassroomRequests } from './features/faculty/FacultyClassroomRequests';
+import { FacultySubjectRequests as FacultySubjectRequestsFaculty } from './features/faculty/FacultySubjectRequests';
+import { FacultySubjectRequests as FacultySubjectRequestsManagement } from './features/management/FacultySubjectRequests';
 import { FacultyEvents, FacultySections, FacultySubjects, FacultyTimetable } from './features/faculty/FacultyTeaching';
 import { ClassroomRequests } from './features/management/ClassroomRequests';
 import { EventDetail, ManagementEvents, StudentEvents } from './features/events/EventPages';
@@ -79,6 +81,11 @@ const App: React.FC = () => {
             <Route path="/management/faculty" element={
               <ProtectedRoute allowedRoles={['MANAGEMENT']}>
                 <Layout><FacultyManagement /></Layout>
+              </ProtectedRoute>
+            } />
+            <Route path="/management/faculty-subject-requests" element={
+              <ProtectedRoute allowedRoles={['MANAGEMENT']}>
+                <Layout><FacultySubjectRequestsManagement /></Layout>
               </ProtectedRoute>
             } />
             <Route path="/management/academics" element={
@@ -169,6 +176,11 @@ const App: React.FC = () => {
             <Route path="/faculty/subjects" element={
               <ProtectedRoute allowedRoles={['FACULTY']}>
                 <Layout><FacultySubjects /></Layout>
+              </ProtectedRoute>
+            } />
+            <Route path="/faculty/subject-requests" element={
+              <ProtectedRoute allowedRoles={['FACULTY']}>
+                <Layout><FacultySubjectRequestsFaculty /></Layout>
               </ProtectedRoute>
             } />
             <Route path="/faculty/sections" element={

@@ -5,7 +5,7 @@ import {
   Building2, LayoutDashboard, Zap, Bell, Bot, MapPin,
   GraduationCap, BookOpen, LogOut, ChevronLeft, ChevronRight,
   Calendar, Shield, Siren, ShieldAlert, Wrench, FileText, Utensils,
-  ClipboardCheck, Users, Building, ScrollText,
+  ClipboardCheck, ClipboardList, Users, Building, ScrollText,
 } from 'lucide-react';
 
 const MANAGEMENT_NAV = [
@@ -14,6 +14,7 @@ const MANAGEMENT_NAV = [
   { href: '/action-center', icon: LayoutDashboard, label: 'Campus Action Center' },
   { href: '/management/students', icon: GraduationCap, label: 'Student Management' },
   { href: '/management/faculty', icon: BookOpen, label: 'Faculty Management' },
+  { href: '/management/faculty-subject-requests', icon: ClipboardList, label: 'Faculty Subject Requests' },
   { href: '/management/academics', icon: GraduationCap, label: 'Academic Management' },
   { href: '/management/audit', icon: ScrollText, label: 'Audit History' },
   { href: '/management/classroom-requests', icon: Building, label: 'Classroom Requests' },
@@ -28,6 +29,7 @@ const FACULTY_NAV = [
   { href: '/faculty', icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/faculty/profile', icon: BookOpen, label: 'My Profile' },
   { href: '/faculty/subjects', icon: GraduationCap, label: 'My Subjects' },
+  { href: '/faculty/subject-requests', icon: ClipboardList, label: 'Request Subjects' },
   { href: '/faculty/sections', icon: Users, label: 'My Sections' },
   { href: '/faculty/timetable', icon: Calendar, label: 'Teaching Timetable' },
   { href: '/faculty/attendance', icon: ClipboardCheck, label: 'Attendance' },

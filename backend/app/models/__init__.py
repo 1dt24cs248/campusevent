@@ -1,5 +1,5 @@
 from app.models.campus import Block, Floor, Room
-from app.models.academic import Department, Section, Subject, Faculty, Student
+from app.models.academic import Department, Section, Subject, Faculty, FacultyTeachingEligibility, Student
 from app.models.academic_content import AcademicMark, AcademicResource, SyllabusModule
 from app.models.schedule import TimetableEntry, SessionOverride, SectionStrengthHistory
 from app.models.availability import RoomUnavailability

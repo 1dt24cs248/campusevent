@@ -15,7 +15,14 @@ from app.models.academic import Department, Faculty, Section, Student, Subject
 from app.models.academic_content import AcademicMark, AcademicResource, SyllabusModule
 from app.models.availability import RoomUnavailability
 from app.models.campus import Floor, Room
-from app.models.faculty_work import AttendanceRecord, AttendanceSession, ClassroomRequest
+from app.models.faculty_work import (
+    AttendanceRecord,
+    AttendanceSession,
+    ClassroomRequest,
+    FacultySubjectAssignment,
+    FacultySubjectRequest,
+    FacultySubjectRequestItem,
+)
 from app.models.identity import User
 from app.models.operations import Assessment
 from app.models.operations import Announcement
@@ -306,6 +313,7 @@ def get_faculty_subjects(
         if entry.subject_id:
             subject_entries.setdefault(entry.subject_id, []).append(entry)
     result = []
+    published_subject_ids = set(subject_entries)
     for subject_id, entries in subject_entries.items():
         subject = db.query(Subject).filter(Subject.id == subject_id).first()
         if subject is None:
@@ -320,6 +328,12 @@ def get_faculty_subjects(
             kind=subject.kind,
             sections=sorted(section.code for section in sections),
             semesters=[],
+            assignment_status="PUBLISHED",
+            weekly_periods=sum(max(entry.duration_slots or 1, 1) for entry in entries),
+            weekly_hours=round(
+                sum(max(entry.duration_slots or 1, 1) for entry in entries) * 55 / 60,
+                2,
+            ),
             demo_data=bool(
                 subject.is_synthetic
                 or any(
@@ -328,6 +342,48 @@ def get_faculty_subjects(
                     for entry in entries
                 )
             ),
+        ))
+    request_items = db.query(FacultySubjectRequestItem).join(
+        FacultySubjectRequest,
+        FacultySubjectRequest.id == FacultySubjectRequestItem.request_id,
+    ).filter(
+        FacultySubjectRequest.faculty_id == faculty.id,
+        FacultySubjectRequestItem.status.in_(("PENDING", "APPROVED", "ASSIGNED")),
+    ).order_by(
+        FacultySubjectRequestItem.created_at,
+        FacultySubjectRequestItem.id,
+    ).all()
+    for item in request_items:
+        if item.subject_id in published_subject_ids:
+            continue
+        subject = db.query(Subject).filter(Subject.id == item.subject_id).first()
+        if subject is None:
+            continue
+        staged = db.query(FacultySubjectAssignment).filter(
+            FacultySubjectAssignment.request_item_id == item.id
+        ).order_by(
+            FacultySubjectAssignment.weekday,
+            FacultySubjectAssignment.start_slot,
+        ).all()
+        section_ids = {assignment.section_id for assignment in staged}
+        if not section_ids:
+            section_ids = set(item.preferred_section_ids or [])
+        sections = db.query(Section).filter(Section.id.in_(section_ids)).all() if section_ids else []
+        weekly_periods = (
+            sum(max(assignment.duration_slots or 1, 1) for assignment in staged)
+            if staged else item.periods_per_week
+        )
+        result.append(FacultySubjectResponse(
+            id=subject.id,
+            code=subject.code,
+            name=subject.name,
+            kind=subject.kind,
+            sections=sorted(section.code for section in sections),
+            semesters=[],
+            assignment_status=item.status,
+            weekly_periods=weekly_periods,
+            weekly_hours=round(weekly_periods * 55 / 60, 2),
+            demo_data=bool(subject.is_synthetic),
         ))
     return sorted(result, key=lambda item: (item.code.casefold(), item.name.casefold()))
 
@@ -1112,6 +1168,8 @@ def list_classroom_request_rooms(
             "floor_id": room.floor_id,
             "capacity": room.capacity,
             "resource_type": room.resource_type,
+            "lab_kind": room.lab_kind,
+            "facilities": room.facilities or [],
             "status": room.status,
             "allocatable_for_classes": room.allocatable_for_classes,
         }

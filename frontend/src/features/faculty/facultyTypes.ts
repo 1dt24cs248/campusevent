@@ -51,6 +51,9 @@ export interface FacultySubject {
   kind?: string | null;
   sections: string[];
   semesters: number[];
+  assignment_status: 'PENDING' | 'APPROVED' | 'ASSIGNED' | 'PUBLISHED';
+  weekly_periods: number;
+  weekly_hours: number;
   demo_data: boolean;
 }
 

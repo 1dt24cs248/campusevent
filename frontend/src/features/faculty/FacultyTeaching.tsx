@@ -15,6 +15,15 @@ function TeachingError() {
   return <div role="alert" className="card p-5 text-sm text-red-300 flex gap-2"><AlertCircle size={16} />Teaching information could not be loaded.</div>;
 }
 
+function assignmentStatusLabel(status: FacultySubject['assignment_status']): string {
+  switch (status) {
+    case 'PENDING': return 'Pending management approval';
+    case 'APPROVED': return 'Approved · awaiting assignment';
+    case 'ASSIGNED': return 'Draft · awaiting publication';
+    case 'PUBLISHED': return 'Published teaching assignment';
+  }
+}
+
 export const FacultySubjects: React.FC = () => {
   const { user } = useAuth();
   const { data, isLoading, isError } = useQuery<FacultySubject[]>({
@@ -26,7 +35,7 @@ export const FacultySubjects: React.FC = () => {
     <section className="space-y-5">
       <header>
         <h1 className="section-header"><BookOpen size={20} className="text-cyan-300" />My Subjects</h1>
-        <p className="text-sm text-slate-400 mt-2">Subjects and sections are derived from your current timetable assignments.</p>
+        <p className="text-sm text-slate-400 mt-2">Published assignments and approved requests awaiting publication are shown separately.</p>
       </header>
       {isLoading ? <div className="card p-5 text-sm text-slate-400">Loading assigned subjects…</div>
         : isError ? <TeachingError />
@@ -39,10 +48,16 @@ export const FacultySubjects: React.FC = () => {
                     {subject.demo_data && <span className="badge-amber">DEMO DATA</span>}
                   </div>
                   <p className="text-sm text-slate-400 mt-3">{subject.kind || 'Class type not specified'}</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className={subject.assignment_status === 'PUBLISHED' ? 'badge-green' : 'badge-amber'}>{assignmentStatusLabel(subject.assignment_status)}</span>
+                    <span className="text-xs text-slate-400">{subject.weekly_periods} periods · {subject.weekly_hours.toFixed(2)} {subject.assignment_status === 'PUBLISHED' ? 'published' : 'requested'} hours/week</span>
+                  </div>
                   <div className="mt-4">
-                    <p className="text-xs uppercase text-slate-500">Sections taught</p>
+                    <p className="text-xs uppercase text-slate-500">{subject.assignment_status === 'PUBLISHED' ? 'Sections taught' : 'Requested / staged sections'}</p>
                     <div className="flex flex-wrap gap-2 mt-2">
-                      {subject.sections.map(section => <span key={section} className="badge-blue">{section}</span>)}
+                      {subject.sections.length
+                        ? subject.sections.map(section => <span key={section} className="badge-blue">{section}</span>)
+                        : <span className="text-xs text-slate-500">Not assigned</span>}
                     </div>
                   </div>
                   {subject.semesters.length > 0 && <p className="text-xs text-slate-500 mt-3">Semester {subject.semesters.join(', ')}</p>}
@@ -93,16 +108,14 @@ export const FacultyTimetable: React.FC = () => {
   const { user } = useAuth();
   const { data = [], isLoading, isError } = useQuery<FacultyTimetableEntry[]>({
     queryKey: ['faculty-week-timetable', user?.id],
-    queryFn: async () => (await api.get('/faculty/timetable', {
-      params: { date: localDateString(new Date()) },
-    })).data,
+    queryFn: async () => (await api.get('/faculty/timetable')).data,
     enabled: Boolean(user?.id),
   });
   return (
     <section className="space-y-5">
       <header>
         <h1 className="section-header"><Calendar size={20} className="text-cyan-300" />My Teaching Timetable</h1>
-        <p className="text-sm text-slate-400 mt-2">Your weekly teaching assignments, with applicable room changes for today.</p>
+        <p className="text-sm text-slate-400 mt-2">Published recurring weekly assignments only. Draft assignments are not displayed.</p>
       </header>
       {isLoading ? <div className="card p-5 text-sm text-slate-400">Loading your timetable…</div>
         : isError ? <TeachingError />
